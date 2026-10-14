@@ -57,14 +57,16 @@ export function getNotifications(events: CalendarEvent[], now: number): AppNotif
 
     if (event.startAt === null) continue
     const minutesUntil = (event.startAt - now) / MINUTE
-    const tolerance = event.deviationMinutes ?? 0
+    const stats = getEventEstimate(event, events).start
+    // Overdue once we're past the usual start plus the calculated buffer (never before the scheduled time).
+    const tolerance = stats ? Math.max(0, stats.meanMinutes + stats.bufferMinutes) : 0
     if (minutesUntil < -tolerance) {
       items.push({
         id: `${event.id}-overdue`,
         kind: 'overdue',
         event,
         message: tolerance
-          ? `Overdue by ${formatDuration(-minutesUntil)}, beyond the usual ±${tolerance}m`
+          ? `Overdue by ${formatDuration(-minutesUntil)}, beyond the usual ${formatDuration(tolerance)} window`
           : `Overdue by ${formatDuration(-minutesUntil)}`,
       })
     } else if (minutesUntil <= SOON_WINDOW_MINUTES) {
@@ -80,14 +82,53 @@ export function getNotifications(events: CalendarEvent[], now: number): AppNotif
   return items.sort((a, b) => order[a.kind] - order[b.kind] || (a.event.startAt ?? Infinity) - (b.event.startAt ?? Infinity))
 }
 
-/** Average observed start-time offset for events sharing the same name.
- * Negative means early; positive means late. Events without a scheduled start are excluded.
+export interface TimeStats {
+  /** Number of similar past occurrences used. */
+  n: number
+  /** Mean offset from the scheduled time, in minutes (negative = early, positive = late). */
+  meanMinutes: number
+  /** Standard deviation of the offsets, in minutes. */
+  stdMinutes: number
+  /** Buffer = 1.5 x the standard deviation, in minutes. */
+  bufferMinutes: number
+}
+
+export interface EventEstimate {
+  /** Pick-up / start time. */
+  start: TimeStats | null
+  /** End time. */
+  end: TimeStats | null
+}
+
+export const BUFFER_FACTOR = 1.5
+const MIN_SAMPLES = 2
+
+/** Fit a normal distribution to offsets (minutes). Needs at least two samples for a standard deviation. */
+export function fitNormal(offsets: number[]): TimeStats | null {
+  const n = offsets.length
+  if (n < MIN_SAMPLES) return null
+  const mean = offsets.reduce((sum, v) => sum + v, 0) / n
+  const variance = offsets.reduce((sum, v) => sum + (v - mean) ** 2, 0) / (n - 1) // sample variance
+  const std = Math.sqrt(variance)
+  return { n, meanMinutes: mean, stdMinutes: std, bufferMinutes: BUFFER_FACTOR * std }
+}
+
+/**
+ * Estimate start (pick-up) and end timing for an event from similar occurrences.
+ * "Similar" means the same name (case-insensitive), so a recurring pick-up / event / person named the same way
+ * is grouped together. The event itself is excluded.
+ * - start offsets: actual start - scheduled start
+ * - end offsets:   actual completion - scheduled end
+ * A normal distribution is fitted to each; the buffer is 1.5x its standard deviation.
  */
-export function getTypicalDeviation(event: CalendarEvent, events: CalendarEvent[]): number | null {
-  const observations = events.filter((item) =>
-    item.name.trim().toLocaleLowerCase() === event.name.trim().toLocaleLowerCase() &&
-    item.startAt !== null && item.startedAt !== null
-  ).map((item) => (item.startedAt! - item.startAt!) / MINUTE)
-  if (observations.length === 0) return event.deviationMinutes
-  return Math.round(observations.reduce((sum, value) => sum + value, 0) / observations.length)
+export function getEventEstimate(event: CalendarEvent, events: CalendarEvent[]): EventEstimate {
+  const key = event.name.trim().toLocaleLowerCase()
+  const similar = events.filter((item) => item.id !== event.id && item.name.trim().toLocaleLowerCase() === key)
+  const startOffsets = similar
+    .filter((item) => item.startAt !== null && item.startedAt !== null)
+    .map((item) => (item.startedAt! - item.startAt!) / MINUTE)
+  const endOffsets = similar
+    .filter((item) => item.endAt != null && item.completedAt != null)
+    .map((item) => (item.completedAt! - item.endAt!) / MINUTE)
+  return { start: fitNormal(startOffsets), end: fitNormal(endOffsets) }
 }

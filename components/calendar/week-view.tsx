@@ -4,7 +4,7 @@ import { useEffect, useRef } from 'react'
 import { addDays, format, isSameDay, startOfDay, startOfWeek } from 'date-fns'
 import { EventPopover } from '@/components/calendar/event-popover'
 import type { CalendarEvent } from '@/lib/types'
-import { getTypicalDeviation } from '@/lib/event-utils'
+import { getEventEstimate } from '@/lib/event-utils'
 import { cn } from '@/lib/utils'
 
 const HOUR_HEIGHT = 48
@@ -115,15 +115,16 @@ export function WeekView({ cursor, now, events }: WeekViewProps) {
                   const top = (start / 60) * HOUR_HEIGHT
                   const left = `calc(${(lane / lanes) * 100}% + 2px)`
                   const width = `calc(${100 / lanes}% - 4px)`
-                  const dev = getTypicalDeviation(event, events) ?? 0 ?? 0
+                  const stats = getEventEstimate(event, events).start
+                  const windowStart = stats ? start + stats.meanMinutes - stats.bufferMinutes : 0
                   return (
                     <div key={event.id}>
-                      {dev !== 0 ? (
+                      {stats && stats.bufferMinutes > 0 ? (
                         <div
                           className="pointer-events-none absolute rounded-md bg-primary/10"
                           style={{
-                            top: ((start + Math.min(dev, 0)) / 60) * HOUR_HEIGHT,
-                            height: (Math.abs(dev) / 60) * HOUR_HEIGHT,
+                            top: (windowStart / 60) * HOUR_HEIGHT,
+                            height: ((2 * stats.bufferMinutes) / 60) * HOUR_HEIGHT,
                             left,
                             width,
                           }}

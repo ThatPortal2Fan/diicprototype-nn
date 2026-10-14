@@ -14,7 +14,6 @@ import type { RepeatRule } from '@/lib/types'
 const MIN_DATE = '2026-10-01'
 const MAX_DATE = '2027-12-31'
 const MAX_NAME = 100
-const MAX_DEVIATION = 720
 
 function defaultDateTime() {
   const next = addHours(startOfHour(new Date()), 1)
@@ -55,8 +54,6 @@ export function AddEventForm() {
     const date = String(data.get('date') ?? '')
     const time = String(data.get('time') ?? '')
     const endTime = String(data.get('endTime') ?? '')
-    const deviationRaw = String(data.get('deviation') ?? '').trim()
-    const direction = String(data.get('direction') ?? 'late')
     const repeatRule = String(data.get('repeatRule') ?? 'none') as RepeatRule
     const repeatUntilDate = String(data.get('repeatUntil') ?? '')
     if (!name) return setError('Please give the event a name.')
@@ -67,12 +64,6 @@ export function AddEventForm() {
     if (time && startAt === null) return setError('Please choose a valid start time.')
     if (endTime && endAt === null) return setError('Please choose a valid end time.')
     if (startAt !== null && endAt !== null && endAt < startAt) return setError('End time must be after the start time.')
-    let deviationMinutes: number | null = null
-    if (deviationRaw) {
-      const parsed = Number(deviationRaw)
-      if (!Number.isInteger(parsed) || parsed < 0 || parsed > MAX_DEVIATION) return setError(`Deviation must be a whole number between 0 and ${MAX_DEVIATION} minutes.`)
-      deviationMinutes = parsed * (direction === 'early' ? -1 : 1)
-    }
     let repeatUntil: number | null = null
     if (repeatRule !== 'none') {
       if (!date || !repeatUntilDate || repeatUntilDate < date || repeatUntilDate > MAX_DATE || repeatUntilDate < MIN_DATE) {
@@ -82,7 +73,7 @@ export function AddEventForm() {
     }
     setSubmitting(true)
     try {
-      await createEvent({ name, startAt, endAt, deviationMinutes, repeatRule, repeatUntil })
+      await createEvent({ name, startAt, endAt, repeatRule, repeatUntil })
       router.push('/calendar')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong saving the event.')
@@ -110,21 +101,12 @@ export function AddEventForm() {
           <datalist id="existing-event-names">
             {matchingNames.map((eventName) => <option key={eventName} value={eventName} />)}
           </datalist>
-          <p className="text-xs text-muted-foreground">Start typing to find existing event names. Matching is case-insensitive, and choosing an existing name reuses its spelling for deviation calculations.</p>
+          <p className="text-xs text-muted-foreground">Start typing to find existing event names. Matching is case-insensitive, and choosing an existing name groups the event with its past occurrences, which the app uses to calculate timing and buffers automatically.</p>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div className="flex flex-col gap-2"><Label htmlFor="date">Date</Label><Input id="date" name="date" type="date" min={MIN_DATE} max={MAX_DATE} defaultValue={initial.date} className="h-11 text-base" /></div>
           <div className="flex flex-col gap-2"><Label htmlFor="time">Start time (optional)</Label><Input id="time" name="time" type="time" defaultValue={initial.time} className="h-11 text-base" /></div>
           <div className="col-span-2 flex flex-col gap-2"><Label htmlFor="endTime">End time (optional)</Label><Input id="endTime" name="endTime" type="time" className="h-11 text-base" /></div>
-        </div>
-        <div className="flex flex-col gap-2">
-          <Label>Usual deviation (optional)</Label>
-          <div className="grid grid-cols-[1fr_1fr_1fr] gap-2">
-            <select name="direction" aria-label="Deviation direction" className="h-11 rounded-md border border-input bg-background px-3 text-sm"><option value="late">Late</option><option value="early">Early</option></select>
-            <Input name="deviation" type="number" min={0} max={MAX_DEVIATION} step={1} placeholder="10" aria-label="Deviation minutes" className="h-11 text-base" />
-            <span className="flex items-center text-sm text-muted-foreground">minutes</span>
-          </div>
-          <p className="text-xs text-muted-foreground">The app calculates the typical offset from actual starts of events with the same name. Events without a scheduled start are excluded.</p>
         </div>
         <div className="flex flex-col gap-2">
           <Label htmlFor="repeatRule">Repeat event</Label>

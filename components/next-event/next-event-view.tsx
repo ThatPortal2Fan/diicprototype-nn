@@ -11,6 +11,7 @@ import { useEvents } from '@/hooks/use-events'
 import { useNow } from '@/hooks/use-now'
 import { completeEvent, startEventNow } from '@/lib/events-store'
 import {
+  getEventEstimate,
   getInProgressEvents,
   getNearestEvent,
   relativeLabel,
@@ -58,6 +59,7 @@ export function NextEventView() {
         <>
           <NearestCard
             event={nearest}
+            events={events}
             now={now}
             busy={busy}
             onStart={() => run(() => startEventNow(nearest))}
@@ -91,19 +93,21 @@ export function NextEventView() {
 
 function NearestCard({
   event,
+  events,
   now,
   busy,
   onStart,
 }: {
   event: CalendarEvent
+  events: CalendarEvent[]
   now: number | null
   busy: boolean
   onStart: () => void
 }) {
-  const dev = event.deviationMinutes
+  const stats = getEventEstimate(event, events).start
   const minutesUntil = now !== null && event.startAt !== null ? (event.startAt - now) / 60_000 : 0
   const overdue = now !== null && event.startAt !== null && minutesUntil < 0
-  const withinWindow = now !== null && event.startAt !== null && dev !== null && Math.abs(minutesUntil) <= Math.abs(dev)
+  const withinWindow = now !== null && event.startAt !== null && stats !== null && Math.abs(minutesUntil + stats.meanMinutes) <= stats.bufferMinutes
 
   return (
     <section

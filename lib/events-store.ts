@@ -56,10 +56,9 @@ function fromDoc(d: QueryDocumentSnapshot<DocumentData>): CalendarEvent {
     name: String(data.name ?? 'Untitled'),
     startAt: toMillis(data.startAt),
     endAt: toMillis(data.endAt),
-    deviationMinutes:
-      typeof data.deviationMinutes === 'number' ? data.deviationMinutes : null,
     status: data.status ?? 'scheduled',
     startedAt: toMillis(data.startedAt),
+    completedAt: toMillis(data.completedAt),
     shiftedMinutes: Number(data.shiftedMinutes ?? 0),
     createdAt: toMillis(data.createdAt) ?? Date.now(),
     repeatRule: data.repeatRule ?? 'none',
@@ -79,23 +78,21 @@ function seedDemoEvents(): CalendarEvent[] {
   const make = (
     name: string,
     offsetMinutes: number,
-    deviationMinutes: number | null,
   ): CalendarEvent => ({
     id: crypto.randomUUID(),
     name,
     startAt: roundedHour + offsetMinutes * MINUTE,
-    deviationMinutes,
     status: 'scheduled',
     startedAt: null,
     shiftedMinutes: 0,
     createdAt: now,
   })
   return sortEvents([
-    make('Morning run', 30, 15),
-    make('Team standup', 24 * 60 - 120, 5),
-    make('Lunch with Sam', 24 * 60 + 90, 20),
-    make('Dentist', 3 * 24 * 60 - 60, null),
-    make('Grocery run', 5 * 24 * 60 + 180, 30),
+    make('Morning run', 30),
+    make('Team standup', 24 * 60 - 120),
+    make('Lunch with Sam', 24 * 60 + 90),
+    make('Dentist', 3 * 24 * 60 - 60),
+    make('Grocery run', 5 * 24 * 60 + 180),
   ])
 }
 
@@ -169,7 +166,6 @@ export async function createEvent(input: NewEventInput) {
         name: eventInput.name,
         startAt: startAt === null ? null : Timestamp.fromMillis(startAt),
         endAt: endAt == null ? null : Timestamp.fromMillis(endAt),
-        deviationMinutes: eventInput.deviationMinutes,
         repeatRule: eventInput.repeatRule,
         repeatUntil: eventInput.repeatUntil == null ? null : Timestamp.fromMillis(eventInput.repeatUntil),
         status: 'scheduled', startedAt: null, shiftedMinutes: 0, createdAt: serverTimestamp(),
@@ -209,11 +205,15 @@ export async function startEventNow(event: CalendarEvent) {
 }
 
 export async function completeEvent(event: CalendarEvent) {
+  const now = Date.now()
   if (MODE === 'demo') {
-    updateDemo(event.id, () => ({ status: 'done' }))
+    updateDemo(event.id, () => ({ status: 'done', completedAt: now }))
     return
   }
-  await updateDoc(doc(getDb(), COLLECTION, event.id), { status: 'done' })
+  await updateDoc(doc(getDb(), COLLECTION, event.id), {
+    status: 'done',
+    completedAt: Timestamp.fromMillis(now),
+  })
 }
 
 export async function removeEvent(event: CalendarEvent) {
@@ -225,20 +225,24 @@ export async function removeEvent(event: CalendarEvent) {
 }
 
 export async function updateEvent(event: CalendarEvent, input: NewEventInput & { status?: CalendarEvent['status'] }) {
+  // Marking an event done from the edit form records the completion time, like the "Done" button does.
+  const completedNow = input.status === 'done' && event.status !== 'done' && event.completedAt == null
+  const now = Date.now()
   const patch = {
     name: input.name,
     startAt: input.startAt === null ? null : Timestamp.fromMillis(input.startAt),
     endAt: input.endAt == null ? null : Timestamp.fromMillis(input.endAt),
-    deviationMinutes: input.deviationMinutes,
     repeatRule: input.repeatRule ?? 'none',
     repeatUntil: input.repeatUntil == null ? null : Timestamp.fromMillis(input.repeatUntil),
     ...(input.status ? { status: input.status } : {}),
+    ...(completedNow ? { completedAt: Timestamp.fromMillis(now) } : {}),
   }
   if (MODE === 'demo') {
     updateDemo(event.id, () => ({
       name: input.name, startAt: input.startAt, endAt: input.endAt ?? null,
-      deviationMinutes: input.deviationMinutes, repeatRule: input.repeatRule ?? 'none',
+      repeatRule: input.repeatRule ?? 'none',
       repeatUntil: input.repeatUntil ?? null, ...(input.status ? { status: input.status } : {}),
+      ...(completedNow ? { completedAt: now } : {}),
     }))
     return
   }

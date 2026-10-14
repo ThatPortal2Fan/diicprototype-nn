@@ -6,9 +6,9 @@ export interface CalendarEvent {
   name: string
   startAt: number | null
   endAt?: number | null
-  deviationMinutes: number | null
   status: EventStatus
   startedAt: number | null
+  completedAt?: number | null
   shiftedMinutes: number
   createdAt: number
   repeatRule?: RepeatRule
@@ -19,7 +19,6 @@ export interface NewEventInput {
   name: string
   startAt: number | null
   endAt?: number | null
-  deviationMinutes: number | null
   repeatRule?: RepeatRule
   repeatUntil?: number | null
 }
