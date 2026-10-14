@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { createEvent } from '@/lib/events-store'
+import { useEvents } from '@/hooks/use-events'
 import type { RepeatRule } from '@/lib/types'
 
 const MIN_DATE = '2026-10-01'
@@ -31,12 +32,26 @@ export function AddEventForm() {
   const [initial] = useState(defaultDateTime)
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [nameInput, setNameInput] = useState('')
+  const { events } = useEvents()
+  const existingNames = Array.from(
+    new Map(
+      events
+        .map((event) => event.name.trim())
+        .filter(Boolean)
+        .map((eventName) => [eventName.toLocaleLowerCase(), eventName]),
+    ).values(),
+  ).sort((a, b) => a.localeCompare(b))
+  const matchingNames = nameInput.trim()
+    ? existingNames.filter((eventName) => eventName.toLocaleLowerCase().includes(nameInput.trim().toLocaleLowerCase()))
+    : []
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
     setError(null)
     const data = new FormData(e.currentTarget)
-    const name = String(data.get('name') ?? '').trim()
+    const typedName = String(data.get('name') ?? '').trim()
+    const name = existingNames.find((eventName) => eventName.toLocaleLowerCase() === typedName.toLocaleLowerCase()) ?? typedName
     const date = String(data.get('date') ?? '')
     const time = String(data.get('time') ?? '')
     const endTime = String(data.get('endTime') ?? '')
@@ -80,8 +95,22 @@ export function AddEventForm() {
       <div className="flex flex-col gap-5 rounded-2xl bg-card p-5 shadow-sm ring-1 ring-border">
         <div className="flex flex-col gap-2">
           <Label htmlFor="name">Event name</Label>
-          <Input id="name" name="name" placeholder="e.g. Morning run" maxLength={MAX_NAME} required autoComplete="off" className="h-11 text-base" />
-          <p className="text-xs text-muted-foreground">Use the same name for recurring events so their observed deviations can be combined.</p>
+          <Input
+            id="name"
+            name="name"
+            list="existing-event-names"
+            placeholder="e.g. Morning run"
+            maxLength={MAX_NAME}
+            required
+            autoComplete="off"
+            value={nameInput}
+            onChange={(event) => setNameInput(event.target.value)}
+            className="h-11 text-base"
+          />
+          <datalist id="existing-event-names">
+            {matchingNames.map((eventName) => <option key={eventName} value={eventName} />)}
+          </datalist>
+          <p className="text-xs text-muted-foreground">Start typing to find existing event names. Matching is case-insensitive, and choosing an existing name reuses its spelling for deviation calculations.</p>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div className="flex flex-col gap-2"><Label htmlFor="date">Date</Label><Input id="date" name="date" type="date" min={MIN_DATE} max={MAX_DATE} defaultValue={initial.date} className="h-11 text-base" /></div>
