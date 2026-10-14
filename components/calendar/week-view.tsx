@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react'
 import { addDays, format, isSameDay, startOfDay, startOfWeek } from 'date-fns'
 import { EventPopover } from '@/components/calendar/event-popover'
 import type { CalendarEvent } from '@/lib/types'
+import { getTypicalDeviation } from '@/lib/event-utils'
 import { cn } from '@/lib/utils'
 
 const HOUR_HEIGHT = 48
@@ -21,10 +22,10 @@ function minutesIntoDay(ms: number) {
 }
 
 function layoutDay(dayEvents: CalendarEvent[]) {
-  const sorted = [...dayEvents].sort((a, b) => a.startAt - b.startAt)
+  const sorted = dayEvents.filter((event) => event.startAt !== null).sort((a, b) => a.startAt! - b.startAt!)
   const laneEnds: number[] = []
   const placed = sorted.map((event) => {
-    const start = minutesIntoDay(event.startAt)
+    const start = minutesIntoDay(event.startAt!)
     let lane = laneEnds.findIndex((end) => end <= start)
     if (lane === -1) {
       lane = laneEnds.length
@@ -90,7 +91,7 @@ export function WeekView({ cursor, now, events }: WeekViewProps) {
           </div>
 
           {days.map((day) => {
-            const dayEvents = events.filter((e) => isSameDay(e.startAt, day))
+            const dayEvents = events.filter((e) => e.startAt !== null && isSameDay(e.startAt, day))
             const { placed, lanes } = layoutDay(dayEvents)
             const isToday = now ? isSameDay(day, now) : false
 
@@ -114,15 +115,15 @@ export function WeekView({ cursor, now, events }: WeekViewProps) {
                   const top = (start / 60) * HOUR_HEIGHT
                   const left = `calc(${(lane / lanes) * 100}% + 2px)`
                   const width = `calc(${100 / lanes}% - 4px)`
-                  const dev = event.deviationMinutes
+                  const dev = getTypicalDeviation(event, events) ?? 0 ?? 0
                   return (
                     <div key={event.id}>
-                      {dev ? (
+                      {dev !== 0 ? (
                         <div
                           className="pointer-events-none absolute rounded-md bg-primary/10"
                           style={{
-                            top: ((start - dev) / 60) * HOUR_HEIGHT,
-                            height: ((dev * 2) / 60) * HOUR_HEIGHT,
+                            top: ((start + Math.min(dev, 0)) / 60) * HOUR_HEIGHT,
+                            height: (Math.abs(dev) / 60) * HOUR_HEIGHT,
                             left,
                             width,
                           }}
@@ -141,7 +142,7 @@ export function WeekView({ cursor, now, events }: WeekViewProps) {
                         )}
                       >
                         <span className="truncate font-semibold">{event.name}</span>
-                        <span className="truncate opacity-80 tabular-nums">{format(event.startAt, 'HH:mm')}</span>
+                        <span className="truncate opacity-80 tabular-nums">{event.startAt === null ? 'Time unset' : format(event.startAt, 'HH:mm')}</span>
                       </EventPopover>
                     </div>
                   )

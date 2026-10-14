@@ -70,7 +70,7 @@ export function NotificationBell() {
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm font-medium">{n.event.name}</span>
                       <span className="block text-xs text-muted-foreground">
-                        {n.message} · {format(n.event.startAt, 'EEE p')}
+                        {n.message} · {n.event.startAt === null ? 'Time unset' : format(n.event.startAt, 'EEE p')}
                       </span>
                     </span>
                   </Link>

@@ -54,18 +54,23 @@ function fromDoc(d: QueryDocumentSnapshot<DocumentData>): CalendarEvent {
   return {
     id: d.id,
     name: String(data.name ?? 'Untitled'),
-    startAt: toMillis(data.startAt) ?? Date.now(),
+    startAt: toMillis(data.startAt),
+    endAt: toMillis(data.endAt),
     deviationMinutes:
       typeof data.deviationMinutes === 'number' ? data.deviationMinutes : null,
     status: data.status ?? 'scheduled',
     startedAt: toMillis(data.startedAt),
     shiftedMinutes: Number(data.shiftedMinutes ?? 0),
     createdAt: toMillis(data.createdAt) ?? Date.now(),
+    repeatRule: data.repeatRule ?? 'none',
+    repeatUntil: toMillis(data.repeatUntil),
   }
 }
 
 function sortEvents(list: CalendarEvent[]) {
-  return [...list].sort((a, b) => a.startAt - b.startAt)
+  const min = new Date('2026-10-01T00:00:00').getTime()
+  const max = new Date('2027-12-31T23:59:59.999').getTime()
+  return list.filter((e) => e.startAt === null || (e.startAt >= min && e.startAt <= max)).sort((a, b) => (a.startAt ?? Infinity) - (b.startAt ?? Infinity))
 }
 
 function seedDemoEvents(): CalendarEvent[] {
@@ -131,30 +136,50 @@ function updateDemo(id: string, patch: (e: CalendarEvent) => Partial<CalendarEve
 }
 
 export async function createEvent(input: NewEventInput) {
-  if (MODE === 'demo') {
-    const event: CalendarEvent = {
-      id: crypto.randomUUID(),
-      ...input,
-      status: 'scheduled',
-      startedAt: null,
-      shiftedMinutes: 0,
-      createdAt: Date.now(),
+  const dates: (number | null)[] = []
+  const first = input.startAt
+  const until = input.repeatUntil ?? first
+  if (first === null || !input.repeatRule || input.repeatRule === 'none' || input.repeatUntil == null) {
+    dates.push(first)
+  } else {
+    let cursor = first
+    const max = new Date('2027-12-31T23:59:59.999').getTime()
+    const limit = Math.min(until, max)
+    while (cursor <= limit && dates.length < 460) {
+      dates.push(cursor)
+      const d = new Date(cursor)
+      if (input.repeatRule === 'daily') d.setDate(d.getDate() + 1)
+      else if (input.repeatRule === 'weekly') d.setDate(d.getDate() + 7)
+      else d.setMonth(d.getMonth() + 1)
+      cursor = d.getTime()
     }
-    setSnapshot({ events: sortEvents([...snapshot.events, event]) })
-    return
   }
-  await addDoc(collection(getDb(), COLLECTION), {
-    name: input.name,
-    startAt: Timestamp.fromMillis(input.startAt),
-    deviationMinutes: input.deviationMinutes,
-    status: 'scheduled',
-    startedAt: null,
-    shiftedMinutes: 0,
-    createdAt: serverTimestamp(),
-  })
+  for (const startAt of dates) {
+    const endAt = startAt !== null && input.startAt !== null && input.endAt != null
+      ? startAt + (input.endAt - input.startAt) : input.endAt ?? null
+    const eventInput = { ...input, startAt, endAt, repeatRule: input.repeatRule ?? 'none', repeatUntil: input.repeatUntil ?? null }
+    if (MODE === 'demo') {
+      const event: CalendarEvent = {
+        id: crypto.randomUUID(), ...eventInput, status: 'scheduled',
+        startedAt: null, shiftedMinutes: 0, createdAt: Date.now(),
+      }
+      setSnapshot({ events: sortEvents([...snapshot.events, event]) })
+    } else {
+      await addDoc(collection(getDb(), COLLECTION), {
+        name: eventInput.name,
+        startAt: startAt === null ? null : Timestamp.fromMillis(startAt),
+        endAt: endAt == null ? null : Timestamp.fromMillis(endAt),
+        deviationMinutes: eventInput.deviationMinutes,
+        repeatRule: eventInput.repeatRule,
+        repeatUntil: eventInput.repeatUntil == null ? null : Timestamp.fromMillis(eventInput.repeatUntil),
+        status: 'scheduled', startedAt: null, shiftedMinutes: 0, createdAt: serverTimestamp(),
+      })
+    }
+  }
 }
 
 export async function shiftEvent(event: CalendarEvent, minutes: number) {
+  if (event.startAt === null) throw new Error('Set a scheduled start time before shifting this event.')
   const startAt = event.startAt + minutes * MINUTE
   if (MODE === 'demo') {
     updateDemo(event.id, (e) => ({ startAt, shiftedMinutes: e.shiftedMinutes + minutes }))
@@ -168,21 +193,18 @@ export async function shiftEvent(event: CalendarEvent, minutes: number) {
 
 export async function startEventNow(event: CalendarEvent) {
   const now = Date.now()
-  const diffMinutes = Math.round((now - event.startAt) / MINUTE)
   if (MODE === 'demo') {
     updateDemo(event.id, (e) => ({
       status: 'in_progress',
       startedAt: now,
-      startAt: now,
-      shiftedMinutes: e.shiftedMinutes + diffMinutes,
+      shiftedMinutes: e.shiftedMinutes,
     }))
     return
   }
   await updateDoc(doc(getDb(), COLLECTION, event.id), {
     status: 'in_progress',
     startedAt: Timestamp.fromMillis(now),
-    startAt: Timestamp.fromMillis(now),
-    shiftedMinutes: increment(diffMinutes),
+
   })
 }
 
@@ -200,4 +222,25 @@ export async function removeEvent(event: CalendarEvent) {
     return
   }
   await deleteDoc(doc(getDb(), COLLECTION, event.id))
+}
+
+export async function updateEvent(event: CalendarEvent, input: NewEventInput & { status?: CalendarEvent['status'] }) {
+  const patch = {
+    name: input.name,
+    startAt: input.startAt === null ? null : Timestamp.fromMillis(input.startAt),
+    endAt: input.endAt == null ? null : Timestamp.fromMillis(input.endAt),
+    deviationMinutes: input.deviationMinutes,
+    repeatRule: input.repeatRule ?? 'none',
+    repeatUntil: input.repeatUntil == null ? null : Timestamp.fromMillis(input.repeatUntil),
+    ...(input.status ? { status: input.status } : {}),
+  }
+  if (MODE === 'demo') {
+    updateDemo(event.id, () => ({
+      name: input.name, startAt: input.startAt, endAt: input.endAt ?? null,
+      deviationMinutes: input.deviationMinutes, repeatRule: input.repeatRule ?? 'none',
+      repeatUntil: input.repeatUntil ?? null, ...(input.status ? { status: input.status } : {}),
+    }))
+    return
+  }
+  await updateDoc(doc(getDb(), COLLECTION, event.id), patch)
 }

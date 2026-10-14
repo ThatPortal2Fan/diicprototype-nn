@@ -23,7 +23,7 @@ export function relativeLabel(startAt: number, now: number) {
 export function getNearestEvent(events: CalendarEvent[]) {
   return events
     .filter((e) => e.status === 'scheduled')
-    .sort((a, b) => a.startAt - b.startAt)[0]
+    .sort((a, b) => (a.startAt ?? Infinity) - (b.startAt ?? Infinity))[0]
 }
 
 export function getInProgressEvents(events: CalendarEvent[]) {
@@ -49,12 +49,13 @@ export function getNotifications(events: CalendarEvent[], now: number): AppNotif
         id: `${event.id}-progress`,
         kind: 'in_progress',
         event,
-        message: `Started ${relativeLabel(event.startedAt ?? event.startAt, now)}`,
+        message: `Started ${event.startedAt !== null ? relativeLabel(event.startedAt, now) : 'just now'}`,
       })
       continue
     }
     if (event.status !== 'scheduled') continue
 
+    if (event.startAt === null) continue
     const minutesUntil = (event.startAt - now) / MINUTE
     const tolerance = event.deviationMinutes ?? 0
     if (minutesUntil < -tolerance) {
@@ -76,5 +77,17 @@ export function getNotifications(events: CalendarEvent[], now: number): AppNotif
     }
   }
   const order: Record<NotificationKind, number> = { overdue: 0, soon: 1, in_progress: 2 }
-  return items.sort((a, b) => order[a.kind] - order[b.kind] || a.event.startAt - b.event.startAt)
+  return items.sort((a, b) => order[a.kind] - order[b.kind] || (a.event.startAt ?? Infinity) - (b.event.startAt ?? Infinity))
+}
+
+/** Average observed start-time offset for events sharing the same name.
+ * Negative means early; positive means late. Events without a scheduled start are excluded.
+ */
+export function getTypicalDeviation(event: CalendarEvent, events: CalendarEvent[]): number | null {
+  const observations = events.filter((item) =>
+    item.name.trim().toLocaleLowerCase() === event.name.trim().toLocaleLowerCase() &&
+    item.startAt !== null && item.startedAt !== null
+  ).map((item) => (item.startedAt! - item.startAt!) / MINUTE)
+  if (observations.length === 0) return event.deviationMinutes
+  return Math.round(observations.reduce((sum, value) => sum + value, 0) / observations.length)
 }

@@ -9,9 +9,8 @@ import { Badge } from '@/components/ui/badge'
 import { ShiftControls } from '@/components/next-event/shift-controls'
 import { useEvents } from '@/hooks/use-events'
 import { useNow } from '@/hooks/use-now'
-import { completeEvent, shiftEvent, startEventNow } from '@/lib/events-store'
+import { completeEvent, startEventNow } from '@/lib/events-store'
 import {
-  formatDuration,
   getInProgressEvents,
   getNearestEvent,
   relativeLabel,
@@ -67,7 +66,7 @@ export function NextEventView() {
             key={nearest.id}
             event={nearest}
             busy={busy}
-            onShift={(minutes) => run(() => shiftEvent(nearest, minutes))}
+            events={events}
           />
         </>
       ) : (
@@ -102,9 +101,9 @@ function NearestCard({
   onStart: () => void
 }) {
   const dev = event.deviationMinutes
-  const minutesUntil = now ? (event.startAt - now) / 60_000 : 0
-  const overdue = now !== null && minutesUntil < -(dev ?? 0)
-  const withinWindow = now !== null && dev !== null && Math.abs(minutesUntil) <= dev
+  const minutesUntil = now !== null && event.startAt !== null ? (event.startAt - now) / 60_000 : 0
+  const overdue = now !== null && event.startAt !== null && minutesUntil < 0
+  const withinWindow = now !== null && event.startAt !== null && dev !== null && Math.abs(minutesUntil) <= Math.abs(dev)
 
   return (
     <section
@@ -113,7 +112,7 @@ function NearestCard({
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-sm font-medium text-primary">{format(event.startAt, 'EEEE, MMMM d')}</p>
+          <p className="text-sm font-medium text-primary">{now !== null && event.startAt !== null && now >= event.startAt ? 'Current event' : event.startAt === null ? 'Date/time not set' : format(event.startAt, 'EEEE, MMMM d')}</p>
           <h2 id="nearest-heading" className="text-2xl font-semibold text-balance">
             {event.name}
           </h2>
@@ -128,30 +127,18 @@ function NearestCard({
       <div className="flex items-end justify-between gap-4">
         <div>
           <p className="font-mono text-5xl font-semibold tracking-tight tabular-nums">
-            {format(event.startAt, 'HH:mm')}
+            {event.startAt === null ? '—' : format(event.startAt, 'HH:mm')}
           </p>
-          <p className="mt-1 text-sm text-muted-foreground">{now ? relativeLabel(event.startAt, now) : '\u00a0'}</p>
+          <p className="mt-1 text-sm text-muted-foreground">{now !== null && event.startAt !== null ? relativeLabel(event.startAt, now) : '\u00a0'}</p>
         </div>
-        {dev !== null ? (
-          <div className="text-right text-sm">
-            <p className="text-muted-foreground">Usually ±{dev}m</p>
-            <p className="font-medium tabular-nums">
-              {format(event.startAt - dev * 60_000, 'p')} – {format(event.startAt + dev * 60_000, 'p')}
-            </p>
-          </div>
-        ) : null}
+
       </div>
 
-      {event.shiftedMinutes !== 0 ? (
-        <p className="text-xs text-muted-foreground">
-          {event.shiftedMinutes > 0 ? 'Delayed' : 'Anticipated'} by {formatDuration(event.shiftedMinutes)} from
-          the original time.
-        </p>
-      ) : null}
+
 
       <Button size="lg" className="h-14 rounded-xl text-base" disabled={busy} onClick={onStart}>
         {busy ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Play className="fill-current" aria-hidden="true" />}
-        Start now
+        Start it now
       </Button>
     </section>
   )
@@ -177,7 +164,7 @@ function InProgressCard({
         </p>
         <p className="truncate font-semibold">{event.name}</p>
         <p className="text-xs text-muted-foreground">
-          Started {now ? relativeLabel(event.startedAt ?? event.startAt, now) : ''}
+          Started {now !== null && (event.startedAt ?? event.startAt) !== null ? relativeLabel((event.startedAt ?? event.startAt)!, now) : ''}
         </p>
       </div>
       <Button variant="outline" disabled={busy} onClick={onComplete} className="shrink-0 rounded-xl bg-card">

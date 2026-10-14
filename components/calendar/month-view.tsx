@@ -12,6 +12,7 @@ import {
 } from 'date-fns'
 import { EventPopover } from '@/components/calendar/event-popover'
 import type { CalendarEvent } from '@/lib/types'
+import { getTypicalDeviation } from '@/lib/event-utils'
 import { cn } from '@/lib/utils'
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -32,6 +33,7 @@ export function MonthView({ cursor, today, events, onSelectDay }: MonthViewProps
 
   const byDay = new Map<string, CalendarEvent[]>()
   for (const e of events) {
+    if (e.startAt === null) continue
     const key = format(e.startAt, 'yyyy-MM-dd')
     const list = byDay.get(key) ?? []
     list.push(e)
@@ -83,6 +85,7 @@ export function MonthView({ cursor, today, events, onSelectDay }: MonthViewProps
                       className={cn(
                         'flex w-full items-center gap-1 truncate rounded-md px-1.5 py-0.5 text-left text-xs hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none',
                         e.status === 'done' && 'text-muted-foreground line-through',
+                        getTypicalDeviation(e, events) !== null && getTypicalDeviation(e, events) !== 0 && 'opacity-75',
                       )}
                     >
                       <span

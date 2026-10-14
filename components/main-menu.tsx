@@ -14,7 +14,7 @@ export function MainMenu() {
   const now = useNow()
   const nearest = getNearestEvent(events)
   const thisWeekCount = now
-    ? events.filter((e) => e.status !== 'done' && isSameWeek(e.startAt, now)).length
+    ? events.filter((e) => e.status !== 'done' && e.startAt !== null && isSameWeek(e.startAt, now)).length
     : 0
 
   return (
@@ -52,8 +52,8 @@ export function MainMenu() {
             <div>
               <p className="text-2xl font-semibold text-balance">{nearest.name}</p>
               <p className="mt-1 text-sm opacity-90">
-                {format(nearest.startAt, 'EEE, MMM d · p')}
-                {now ? ` · ${relativeLabel(nearest.startAt, now)}` : ''}
+                {nearest.startAt === null ? 'Time not set' : format(nearest.startAt, 'EEE, MMM d · p')}
+                {now !== null && nearest.startAt !== null ? ` · ${relativeLabel(nearest.startAt, now)}` : ''}
               </p>
             </div>
           ) : (
