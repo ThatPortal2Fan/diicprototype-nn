@@ -7,12 +7,13 @@ import { NotificationBell } from '@/components/notification-bell'
 import { DataStatusBanner } from '@/components/data-status-banner'
 import { useEvents } from '@/hooks/use-events'
 import { useNow } from '@/hooks/use-now'
-import { getNearestEvent, relativeLabel } from '@/lib/event-utils'
+import { getFocusEvent, isOngoing, relativeLabel } from '@/lib/event-utils'
 
 export function MainMenu() {
   const { events, status } = useEvents()
   const now = useNow()
-  const nearest = getNearestEvent(events)
+  const nearest = getFocusEvent(events, now)
+  const isCurrent = nearest ? isOngoing(nearest, now) : false
   const thisWeekCount = now
     ? events.filter((e) => e.status !== 'done' && isSameWeek(e.startAt, now)).length
     : 0
@@ -39,7 +40,7 @@ export function MainMenu() {
           <div className="flex items-center justify-between">
             <span className="inline-flex items-center gap-2 text-sm font-medium opacity-90">
               <Timer className="size-4" aria-hidden="true" />
-              Next event
+              {isCurrent ? 'Current event' : 'Next event'}
             </span>
             <ArrowRight
               className="size-5 transition-transform group-hover:translate-x-0.5"
@@ -52,7 +53,7 @@ export function MainMenu() {
             <div>
               <p className="text-2xl font-semibold text-balance">{nearest.name}</p>
               <p className="mt-1 text-sm opacity-90">
-                {format(nearest.startAt, 'EEE, MMM d · p')}
+                {`${format(nearest.startAt, 'EEE, MMM d · p')} – ${format(nearest.endAt, 'p')}`}
                 {now ? ` · ${relativeLabel(nearest.startAt, now)}` : ''}
               </p>
             </div>
@@ -63,7 +64,7 @@ export function MainMenu() {
             </div>
           )}
           <span className="self-start rounded-full bg-primary-foreground/15 px-3 py-1 text-xs font-medium">
-            Start, anticipate or delay
+            Start it now · see usual deviation
           </span>
         </Link>
 
@@ -92,7 +93,7 @@ export function MainMenu() {
             </span>
             <span>
               <span className="block font-semibold">Add event</span>
-              <span className="block text-sm text-muted-foreground">Name, date & time</span>
+              <span className="block text-sm text-muted-foreground">Times, repeats & deviation</span>
             </span>
           </Link>
         </div>

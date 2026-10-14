@@ -1,16 +1,29 @@
 'use client'
 
 import Link from 'next/link'
-import { useState } from 'react'
-import { addMonths, addWeeks, endOfWeek, format, isSameMonth, startOfWeek } from 'date-fns'
+import { useMemo, useState } from 'react'
+import {
+  addMonths,
+  addWeeks,
+  endOfMonth,
+  endOfWeek,
+  format,
+  isSameMonth,
+  startOfMonth,
+  startOfWeek,
+} from 'date-fns'
 import { ChevronLeft, ChevronRight, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { MonthView } from '@/components/calendar/month-view'
 import { WeekView } from '@/components/calendar/week-view'
+import { EditEventDialog } from '@/components/edit-event-dialog'
 import { PageHeader } from '@/components/page-header'
 import { DataStatusBanner } from '@/components/data-status-banner'
 import { useEvents } from '@/hooks/use-events'
 import { useNow } from '@/hooks/use-now'
+import { WINDOW_END, WINDOW_START } from '@/lib/date-window'
+import { getDeviationStats } from '@/lib/event-utils'
+import type { CalendarEvent } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
 type View = 'month' | 'week'
@@ -23,16 +36,30 @@ function weekLabel(cursor: Date) {
     : `${format(start, 'MMM d')} – ${format(end, 'MMM d, yyyy')}`
 }
 
+function clampToWindow(ms: number) {
+  return new Date(Math.min(Math.max(ms, WINDOW_START), WINDOW_END))
+}
+
 export function CalendarView() {
   const { events } = useEvents()
   const now = useNow()
+  const stats = useMemo(() => getDeviationStats(events), [events])
   const [view, setView] = useState<View>('month')
   const [cursor, setCursor] = useState<Date | null>(null)
-  const activeCursor = cursor ?? (now ? new Date(now) : null)
+  const [editing, setEditing] = useState<CalendarEvent | null>(null)
+  const activeCursor = cursor ?? (now ? clampToWindow(now) : null)
+
+  const canGoBack =
+    activeCursor !== null &&
+    (view === 'month' ? startOfMonth(activeCursor).getTime() : startOfWeek(activeCursor).getTime()) > WINDOW_START
+  const canGoForward =
+    activeCursor !== null &&
+    (view === 'month' ? endOfMonth(activeCursor).getTime() : endOfWeek(activeCursor).getTime()) < WINDOW_END
 
   function step(direction: 1 | -1) {
     if (!activeCursor) return
-    setCursor(view === 'month' ? addMonths(activeCursor, direction) : addWeeks(activeCursor, direction))
+    const next = view === 'month' ? addMonths(activeCursor, direction) : addWeeks(activeCursor, direction)
+    setCursor(clampToWindow(next.getTime()))
   }
 
   return (
@@ -68,16 +95,28 @@ export function CalendarView() {
         </div>
 
         <div className="flex items-center gap-1">
-          <Button variant="outline" size="icon" onClick={() => step(-1)} aria-label={`Previous ${view}`}>
+          <Button variant="outline" size="icon" onClick={() => step(-1)} disabled={!canGoBack} aria-label={`Previous ${view}`}>
             <ChevronLeft aria-hidden="true" />
           </Button>
           <Button variant="outline" onClick={() => setCursor(null)}>
             Today
           </Button>
-          <Button variant="outline" size="icon" onClick={() => step(1)} aria-label={`Next ${view}`}>
+          <Button variant="outline" size="icon" onClick={() => step(1)} disabled={!canGoForward} aria-label={`Next ${view}`}>
             <ChevronRight aria-hidden="true" />
           </Button>
         </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground" aria-hidden="true">
+        <span className="inline-flex items-center gap-1.5">
+          <span className="h-3 w-4 rounded-sm border-l-[3px] border-primary bg-primary/30" />
+          Planned time
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="h-3 w-4 rounded-sm border border-dashed border-primary/60 bg-primary/10" />
+          Usual deviation (early or late)
+        </span>
+        <span>Calendar covers Oct 2026 – Dec 2027</span>
       </div>
 
       {activeCursor ? (
@@ -86,17 +125,21 @@ export function CalendarView() {
             cursor={activeCursor}
             today={now ? new Date(now) : null}
             events={events}
+            stats={stats}
+            onEdit={setEditing}
             onSelectDay={(day) => {
               setCursor(day)
               setView('week')
             }}
           />
         ) : (
-          <WeekView cursor={activeCursor} now={now} events={events} />
+          <WeekView cursor={activeCursor} now={now} events={events} stats={stats} onEdit={setEditing} />
         )
       ) : (
         <div className="h-96 animate-pulse rounded-2xl bg-card ring-1 ring-border" />
       )}
+
+      <EditEventDialog event={editing} onOpenChange={(open) => !open && setEditing(null)} />
     </main>
   )
 }
