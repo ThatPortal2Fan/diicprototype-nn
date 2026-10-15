@@ -7,7 +7,7 @@ import { AlarmClock, Bell, Clock, PlayCircle } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useEvents } from '@/hooks/use-events'
 import { useNow } from '@/hooks/use-now'
-import { getNotifications, type NotificationKind } from '@/lib/event-utils'
+import { eventTitle, getNotifications, type NotificationKind } from '@/lib/event-utils'
 import { cn } from '@/lib/utils'
 
 const KIND_STYLES: Record<NotificationKind, { icon: typeof Bell; className: string; label: string }> = {
@@ -68,7 +68,7 @@ export function NotificationBell() {
                       <span className="sr-only">{style.label}</span>
                     </span>
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-medium">{n.event.name}</span>
+                      <span className="block truncate text-sm font-medium">{eventTitle(n.event)}</span>
                       <span className="block text-xs text-muted-foreground">
                         {n.message} · {n.event.startAt === null ? 'Time unset' : format(n.event.startAt, 'EEE p')}
                       </span>

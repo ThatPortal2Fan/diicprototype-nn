@@ -14,13 +14,28 @@ interface NameComboboxProps {
   options: string[]
   placeholder?: string
   maxLength?: number
+  required?: boolean
+  /** What the options are, for the dropdown button's label. */
+  optionsLabel?: string
+  className?: string
 }
 
 /**
  * Text input with a real dropdown of existing names.
  * Typing filters the list (case-insensitive "contains"); the chevron (or ArrowDown) shows every name.
  */
-export function NameCombobox({ id, name, value, onValueChange, options, placeholder, maxLength }: NameComboboxProps) {
+export function NameCombobox({
+  id,
+  name,
+  value,
+  onValueChange,
+  options,
+  placeholder,
+  maxLength,
+  required = true,
+  optionsLabel = 'existing event names',
+  className,
+}: NameComboboxProps) {
   const listId = useId()
   const inputRef = useRef<HTMLInputElement>(null)
   const [open, setOpen] = useState(false)
@@ -98,7 +113,7 @@ export function NameCombobox({ id, name, value, onValueChange, options, placehol
         aria-activedescendant={expanded && active >= 0 ? `${listId}-${active}` : undefined}
         placeholder={placeholder}
         maxLength={maxLength}
-        required
+        required={required}
         autoComplete="off"
         value={value}
         onChange={(event) => {
@@ -108,13 +123,13 @@ export function NameCombobox({ id, name, value, onValueChange, options, placehol
           setOpen(true)
         }}
         onKeyDown={onKeyDown}
-        className={cn('h-11 text-base', options.length > 0 && 'pr-11')}
+        className={cn('h-11 text-base', options.length > 0 && 'pr-11', className)}
       />
       {options.length > 0 ? (
         <button
           type="button"
           tabIndex={-1}
-          aria-label={open ? 'Hide existing event names' : 'Show existing event names'}
+          aria-label={`${open ? 'Hide' : 'Show'} ${optionsLabel}`}
           aria-expanded={expanded}
           aria-controls={listId}
           onMouseDown={(event) => event.preventDefault()} // keep focus in the input

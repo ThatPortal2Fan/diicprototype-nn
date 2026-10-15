@@ -7,12 +7,13 @@ import { NotificationBell } from '@/components/notification-bell'
 import { DataStatusBanner } from '@/components/data-status-banner'
 import { useEvents } from '@/hooks/use-events'
 import { useNow } from '@/hooks/use-now'
-import { getNearestEvent, relativeLabel } from '@/lib/event-utils'
+import { eventTitle, formatDuration, getNearestEvent, getStartWindow, relativeLabel } from '@/lib/event-utils'
 
 export function MainMenu() {
   const { events, status } = useEvents()
   const now = useNow()
   const nearest = getNearestEvent(events, now)
+  const nearestWindow = nearest && nearest.status === 'scheduled' ? getStartWindow(nearest, events) : null
   const thisWeekCount = now
     ? events.filter((e) => e.status !== 'done' && e.startAt !== null && isSameWeek(e.startAt, now)).length
     : 0
@@ -50,12 +51,20 @@ export function MainMenu() {
             <div className="h-16 animate-pulse rounded-lg bg-primary-foreground/15" />
           ) : nearest ? (
             <div>
-              <p className="text-2xl font-semibold text-balance">{nearest.name}</p>
+              <p className="text-2xl font-semibold text-balance">{eventTitle(nearest)}</p>
               <p className="mt-1 text-sm opacity-90">
                 {nearest.status === 'in_progress' ? 'In progress · ' : ''}
                 {nearest.startAt === null ? 'Time not set' : format(nearest.startAt, 'EEE, MMM d · p')}
                 {now !== null && nearest.startAt !== null ? ` · ${relativeLabel(nearest.startAt, now)}` : ''}
               </p>
+              {nearestWindow ? (
+                <p className="mt-2 inline-flex flex-wrap items-center gap-x-1.5 rounded-lg border border-dashed border-primary-foreground/50 bg-primary-foreground/10 px-2.5 py-1 text-sm">
+                  <span className="font-medium tabular-nums">
+                    Predicted start {format(nearestWindow.from, 'p')} – {format(nearestWindow.to, 'p')}
+                  </span>
+                  <span className="opacity-80">· ±{formatDuration(nearestWindow.stats.bufferMinutes)}</span>
+                </p>
+              ) : null}
             </div>
           ) : (
             <div>

@@ -10,10 +10,10 @@ import { Label } from '@/components/ui/label'
 import { NameCombobox } from '@/components/name-combobox'
 import { createEvent } from '@/lib/events-store'
 import { useEvents } from '@/hooks/use-events'
+import { canonical, detailOptions, distinctOptions } from '@/lib/event-utils'
+import { BOUNDS_LABEL, MAX_DATE, MAX_LABEL, MIN_DATE } from '@/lib/bounds'
 import type { RepeatRule } from '@/lib/types'
 
-const MIN_DATE = '2026-10-01'
-const MAX_DATE = '2027-12-31'
 const MAX_NAME = 100
 
 function defaultDateTime() {
@@ -33,22 +33,18 @@ export function AddEventForm() {
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [nameInput, setNameInput] = useState('')
+  const [detailInput, setDetailInput] = useState('')
   const { events } = useEvents()
-  const existingNames = Array.from(
-    new Map(
-      events
-        .map((event) => event.name.trim())
-        .filter(Boolean)
-        .map((eventName) => [eventName.toLocaleLowerCase(), eventName]),
-    ).values(),
-  ).sort((a, b) => a.localeCompare(b))
+  const existingNames = distinctOptions(events.map((event) => event.name))
+  const existingDetails = detailOptions(events, nameInput)
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
     setError(null)
     const data = new FormData(e.currentTarget)
     const typedName = String(data.get('name') ?? '').trim()
-    const name = existingNames.find((eventName) => eventName.toLocaleLowerCase() === typedName.toLocaleLowerCase()) ?? typedName
+    const name = canonical(typedName, existingNames)
+    const detail = canonical(String(data.get('detail') ?? ''), existingDetails)
     const date = String(data.get('date') ?? '')
     const time = String(data.get('time') ?? '')
     const endTime = String(data.get('endTime') ?? '')
@@ -56,7 +52,8 @@ export function AddEventForm() {
     const repeatUntilDate = String(data.get('repeatUntil') ?? '')
     if (!name) return setError('Please give the event a name.')
     if (name.length > MAX_NAME) return setError(`Name must be ${MAX_NAME} characters or fewer.`)
-    if (date && (date < MIN_DATE || date > MAX_DATE)) return setError('Events must be between October 2026 and December 2027.')
+    if (detail.length > MAX_NAME) return setError(`Detail must be ${MAX_NAME} characters or fewer.`)
+    if (date && (date < MIN_DATE || date > MAX_DATE)) return setError(`Events must be between ${BOUNDS_LABEL}.`)
     const startAt = toMillis(date, time)
     const endAt = toMillis(date, endTime)
     if (time && startAt === null) return setError('Please choose a valid start time.')
@@ -65,13 +62,13 @@ export function AddEventForm() {
     let repeatUntil: number | null = null
     if (repeatRule !== 'none') {
       if (!date || !repeatUntilDate || repeatUntilDate < date || repeatUntilDate > MAX_DATE || repeatUntilDate < MIN_DATE) {
-        return setError('Choose a repeat-until date between the event date and December 2027.')
+        return setError(`Choose a repeat-until date between the event date and ${MAX_LABEL}.`)
       }
       repeatUntil = toMillis(repeatUntilDate, time || '00:00')
     }
     setSubmitting(true)
     try {
-      await createEvent({ name, startAt, endAt, repeatRule, repeatUntil })
+      await createEvent({ name, detail, startAt, endAt, repeatRule, repeatUntil })
       router.push('/calendar')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong saving the event.')
@@ -93,7 +90,22 @@ export function AddEventForm() {
             placeholder="e.g. Morning run"
             maxLength={MAX_NAME}
           />
-          <p className="text-xs text-muted-foreground">Start typing, or tap the arrow, to pick an existing event name. Matching is case-insensitive, and choosing an existing name groups the event with its past occurrences, which the app uses to calculate timing and buffers automatically.</p>
+          <p className="text-xs text-muted-foreground">Start typing, or tap the arrow, to pick an existing event name. Matching is case-insensitive, and choosing an existing name groups the event with its past occurrences, which the app uses to predict its timing automatically.</p>
+        </div>
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="detail">Detail (optional)</Label>
+          <NameCombobox
+            id="detail"
+            name="detail"
+            value={detailInput}
+            onValueChange={setDetailInput}
+            options={existingDetails}
+            placeholder="e.g. School, Grandma's"
+            maxLength={MAX_NAME}
+            required={false}
+            optionsLabel="existing details"
+          />
+          <p className="text-xs text-muted-foreground">Predictions are calculated from past events with the same name and detail.</p>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div className="flex flex-col gap-2"><Label htmlFor="date">Date</Label><Input id="date" name="date" type="date" min={MIN_DATE} max={MAX_DATE} defaultValue={initial.date} className="h-11 text-base" /></div>

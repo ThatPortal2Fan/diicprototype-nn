@@ -11,6 +11,7 @@ import { useEvents } from '@/hooks/use-events'
 import { useNow } from '@/hooks/use-now'
 import { completeEvent, startEventNow } from '@/lib/events-store'
 import {
+  eventTitle,
   getEventEstimate,
   getInProgressEvents,
   getNearestScheduledEvent,
@@ -118,7 +119,7 @@ function NearestCard({
         <div className="min-w-0">
           <p className="text-sm font-medium text-primary">{now !== null && event.startAt !== null && now >= event.startAt ? 'Current event' : event.startAt === null ? 'Date/time not set' : format(event.startAt, 'EEEE, MMMM d')}</p>
           <h2 id="nearest-heading" className="text-2xl font-semibold text-balance">
-            {event.name}
+            {eventTitle(event)}
           </h2>
         </div>
         {overdue ? (
@@ -166,7 +167,7 @@ function InProgressCard({
           <span className="size-2 animate-pulse rounded-full bg-emerald-500" aria-hidden="true" />
           In progress
         </p>
-        <p className="truncate font-semibold">{event.name}</p>
+        <p className="truncate font-semibold">{eventTitle(event)}</p>
         <p className="text-xs text-muted-foreground">
           Started {now !== null && (event.startedAt ?? event.startAt) !== null ? relativeLabel((event.startedAt ?? event.startAt)!, now) : ''}
         </p>

@@ -73,6 +73,7 @@ export function getNotifications(events: CalendarEvent[], now: number): AppNotif
 
     if (event.startAt === null) continue
     const minutesUntil = (event.startAt - now) / MINUTE
+    if (minutesUntil > SOON_WINDOW_MINUTES) continue // not due yet; skip the estimate (there can be thousands of these)
     const stats = getEventEstimate(event, events).start
     // Overdue once we're past the usual start plus the calculated buffer (never before the scheduled time).
     const tolerance = stats ? Math.max(0, stats.meanMinutes + stats.bufferMinutes) : 0
@@ -131,15 +132,19 @@ export function fitNormal(offsets: number[]): TimeStats | null {
 
 /**
  * Estimate start (pick-up) and end timing for an event from similar occurrences.
- * "Similar" means the same name (case-insensitive), so a recurring pick-up / event / person named the same way
- * is grouped together. The event itself is excluded.
+ * "Similar" means the same name and detail (both case-insensitive), so a recurring pick-up / event / person
+ * described the same way is grouped together. The event itself is excluded.
  * - start offsets: actual start - scheduled start
  * - end offsets:   actual completion - scheduled end
  * A normal distribution is fitted to each; the buffer is 1.5x its standard deviation.
  */
+function similarityKey(event: CalendarEvent) {
+  return `${event.name.trim().toLocaleLowerCase()}\u0000${(event.detail ?? '').trim().toLocaleLowerCase()}`
+}
+
 export function getEventEstimate(event: CalendarEvent, events: CalendarEvent[]): EventEstimate {
-  const key = event.name.trim().toLocaleLowerCase()
-  const similar = events.filter((item) => item.id !== event.id && item.name.trim().toLocaleLowerCase() === key)
+  const key = similarityKey(event)
+  const similar = events.filter((item) => item.id !== event.id && similarityKey(item) === key)
   const startOffsets = similar
     .filter((item) => item.startAt !== null && item.startedAt !== null)
     .map((item) => (item.startedAt! - item.startAt!) / MINUTE)
@@ -147,4 +152,69 @@ export function getEventEstimate(event: CalendarEvent, events: CalendarEvent[]):
     .filter((item) => item.endAt != null && item.completedAt != null)
     .map((item) => (item.completedAt! - item.endAt!) / MINUTE)
   return { start: fitNormal(startOffsets), end: fitNormal(endOffsets) }
+}
+
+export interface BufferWindow {
+  /** Buffer edge before the usual time, in ms. */
+  from: number
+  /** Buffer edge after the usual time, in ms. */
+  to: number
+  stats: TimeStats
+}
+
+function bufferAround(at: number | null | undefined, stats: TimeStats | null): BufferWindow | null {
+  if (at == null || !stats) return null
+  const center = at + stats.meanMinutes * MINUTE
+  const buffer = stats.bufferMinutes * MINUTE
+  return { from: center - buffer, to: center + buffer, stats }
+}
+
+/**
+ * Buffer around the start and end, counted from the distribution average:
+ * scheduled time + mean offset ± 1.5σ. Null without the time or enough history.
+ */
+export function getBufferWindows(event: CalendarEvent, events: CalendarEvent[]) {
+  const estimate = getEventEstimate(event, events)
+  return {
+    start: bufferAround(event.startAt, estimate.start),
+    end: isInstant(event) ? null : bufferAround(event.endAt, estimate.end),
+  }
+}
+
+export function getStartWindow(event: CalendarEvent, events: CalendarEvent[]) {
+  return getBufferWindows(event, events).start
+}
+
+/** An event with no duration (no end time, or ending when it starts). */
+export function isInstant(event: CalendarEvent) {
+  return event.endAt == null || event.startAt === null || event.endAt <= event.startAt
+}
+
+/** Name plus detail, for display. */
+export function eventTitle(event: Pick<CalendarEvent, 'name' | 'detail'>) {
+  const detail = event.detail?.trim()
+  return detail ? `${event.name} · ${detail}` : event.name
+}
+
+/** Distinct non-empty values (case-insensitive, first spelling kept), sorted. */
+export function distinctOptions(values: (string | undefined)[]) {
+  const map = new Map<string, string>()
+  for (const value of values) {
+    const trimmed = value?.trim()
+    if (trimmed && !map.has(trimmed.toLocaleLowerCase())) map.set(trimmed.toLocaleLowerCase(), trimmed)
+  }
+  return Array.from(map.values()).sort((a, b) => a.localeCompare(b))
+}
+
+/** Details used before with this name (all details when the name has none yet). */
+export function detailOptions(events: CalendarEvent[], name: string) {
+  const key = name.trim().toLocaleLowerCase()
+  const forName = distinctOptions(events.filter((e) => e.name.trim().toLocaleLowerCase() === key).map((e) => e.detail))
+  return forName.length ? forName : distinctOptions(events.map((e) => e.detail))
+}
+
+/** Use the existing spelling of a typed value when it matches one case-insensitively. */
+export function canonical(value: string, options: string[]) {
+  const trimmed = value.trim()
+  return options.find((option) => option.toLocaleLowerCase() === trimmed.toLocaleLowerCase()) ?? trimmed
 }

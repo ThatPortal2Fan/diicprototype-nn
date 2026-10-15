@@ -1,5 +1,4 @@
 import {
-  addDoc,
   collection,
   deleteDoc,
   doc,
@@ -10,11 +9,14 @@ import {
   serverTimestamp,
   Timestamp,
   updateDoc,
+  writeBatch,
   type DocumentData,
   type QueryDocumentSnapshot,
 } from 'firebase/firestore'
+import { addDays, addMonths, addWeeks, format } from 'date-fns'
+import { MAX_AT, MIN_AT } from './bounds'
 import { getDb, isFirebaseConfigured } from './firebase'
-import type { CalendarEvent, NewEventInput } from './types'
+import type { CalendarEvent, NewEventInput, RepeatRule } from './types'
 
 export interface EventsSnapshot {
   events: CalendarEvent[]
@@ -54,6 +56,7 @@ function fromDoc(d: QueryDocumentSnapshot<DocumentData>): CalendarEvent {
   return {
     id: d.id,
     name: String(data.name ?? 'Untitled'),
+    detail: String(data.detail ?? ''),
     startAt: toMillis(data.startAt),
     endAt: toMillis(data.endAt),
     status: data.status ?? 'scheduled',
@@ -63,13 +66,12 @@ function fromDoc(d: QueryDocumentSnapshot<DocumentData>): CalendarEvent {
     createdAt: toMillis(data.createdAt) ?? Date.now(),
     repeatRule: data.repeatRule ?? 'none',
     repeatUntil: toMillis(data.repeatUntil),
+    seriesId: data.seriesId ?? null,
   }
 }
 
 function sortEvents(list: CalendarEvent[]) {
-  const min = new Date('2026-10-01T00:00:00').getTime()
-  const max = new Date('2027-12-31T23:59:59.999').getTime()
-  return list.filter((e) => e.startAt === null || (e.startAt >= min && e.startAt <= max)).sort((a, b) => (a.startAt ?? Infinity) - (b.startAt ?? Infinity))
+  return list.filter((e) => e.startAt === null || (e.startAt >= MIN_AT && e.startAt <= MAX_AT)).sort((a, b) => (a.startAt ?? Infinity) - (b.startAt ?? Infinity))
 }
 
 function seedDemoEvents(): CalendarEvent[] {
@@ -132,45 +134,118 @@ function updateDemo(id: string, patch: (e: CalendarEvent) => Partial<CalendarEve
   })
 }
 
-export async function createEvent(input: NewEventInput) {
-  const dates: (number | null)[] = []
-  const first = input.startAt
-  const until = input.repeatUntil ?? first
-  if (first === null || !input.repeatRule || input.repeatRule === 'none' || input.repeatUntil == null) {
-    dates.push(first)
-  } else {
-    let cursor = first
-    const max = new Date('2027-12-31T23:59:59.999').getTime()
-    const limit = Math.min(until, max)
-    while (cursor <= limit && dates.length < 460) {
-      dates.push(cursor)
-      const d = new Date(cursor)
-      if (input.repeatRule === 'daily') d.setDate(d.getDate() + 1)
-      else if (input.repeatRule === 'weekly') d.setDate(d.getDate() + 7)
-      else d.setMonth(d.getMonth() + 1)
-      cursor = d.getTime()
-    }
+// Enough for a daily repeat across the whole range.
+const MAX_OCCURRENCES = 3700
+
+/** Occurrence times from `first` (inclusive) up to `until`, stepped from the first date so monthly repeats don't drift. */
+function repeatDates(first: number, rule: RepeatRule, until: number) {
+  const limit = Math.min(until, MAX_AT)
+  const step = rule === 'daily' ? addDays : rule === 'weekly' ? addWeeks : addMonths
+  const dates: number[] = []
+  for (let i = 0; dates.length < MAX_OCCURRENCES; i++) {
+    const at = step(first, i).getTime()
+    if (at > limit) break
+    dates.push(at)
   }
-  for (const startAt of dates) {
-    const endAt = startAt !== null && input.startAt !== null && input.endAt != null
-      ? startAt + (input.endAt - input.startAt) : input.endAt ?? null
-    const eventInput = { ...input, startAt, endAt, repeatRule: input.repeatRule ?? 'none', repeatUntil: input.repeatUntil ?? null }
-    if (MODE === 'demo') {
-      const event: CalendarEvent = {
-        id: crypto.randomUUID(), ...eventInput, status: 'scheduled',
-        startedAt: null, shiftedMinutes: 0, createdAt: Date.now(),
-      }
-      setSnapshot({ events: sortEvents([...snapshot.events, event]) })
-    } else {
-      await addDoc(collection(getDb(), COLLECTION), {
-        name: eventInput.name,
-        startAt: startAt === null ? null : Timestamp.fromMillis(startAt),
-        endAt: endAt == null ? null : Timestamp.fromMillis(endAt),
-        repeatRule: eventInput.repeatRule,
-        repeatUntil: eventInput.repeatUntil == null ? null : Timestamp.fromMillis(eventInput.repeatUntil),
+  return dates
+}
+
+type Occurrence = Pick<CalendarEvent, 'name' | 'detail' | 'startAt' | 'endAt' | 'repeatRule' | 'repeatUntil' | 'seriesId'>
+
+/** Copies of `base` (keeping its duration) at each of `dates`, all scheduled. */
+function occurrences(base: Occurrence, dates: (number | null)[]): Occurrence[] {
+  // Only the occurrence fields are copied: never the id, status or recorded times of an edited event.
+  return dates.map((startAt) => ({
+    name: base.name,
+    detail: base.detail ?? '',
+    repeatRule: base.repeatRule ?? 'none',
+    repeatUntil: base.repeatUntil ?? null,
+    seriesId: base.seriesId ?? null,
+    startAt,
+    endAt: startAt !== null && base.startAt !== null && base.endAt != null ? startAt + (base.endAt - base.startAt) : base.endAt ?? null,
+  }))
+}
+
+/** Add new scheduled events and delete others, in Firestore batches (or in memory in demo mode). */
+async function writeEvents(added: Occurrence[], removedIds: string[] = []) {
+  if (MODE === 'demo') {
+    const removed = new Set(removedIds)
+    const fresh: CalendarEvent[] = added.map((o) => ({
+      id: crypto.randomUUID(), ...o, status: 'scheduled', startedAt: null, shiftedMinutes: 0, createdAt: Date.now(),
+    }))
+    setSnapshot({ events: sortEvents([...snapshot.events.filter((e) => !removed.has(e.id)), ...fresh]) })
+    return
+  }
+  const ops = [
+    ...removedIds.map((id) => (batch: ReturnType<typeof writeBatch>) => batch.delete(doc(getDb(), COLLECTION, id))),
+    ...added.map((o) => (batch: ReturnType<typeof writeBatch>) =>
+      batch.set(doc(collection(getDb(), COLLECTION)), {
+        name: o.name,
+        detail: o.detail ?? '',
+        startAt: o.startAt === null ? null : Timestamp.fromMillis(o.startAt),
+        endAt: o.endAt == null ? null : Timestamp.fromMillis(o.endAt),
+        repeatRule: o.repeatRule ?? 'none',
+        repeatUntil: o.repeatUntil == null ? null : Timestamp.fromMillis(o.repeatUntil),
+        seriesId: o.seriesId ?? null,
         status: 'scheduled', startedAt: null, shiftedMinutes: 0, createdAt: serverTimestamp(),
-      })
-    }
+      }),
+    ),
+  ]
+  for (let i = 0; i < ops.length; i += 400) {
+    const batch = writeBatch(getDb())
+    ops.slice(i, i + 400).forEach((op) => op(batch))
+    await batch.commit()
+  }
+}
+
+export async function createEvent(input: NewEventInput) {
+  const repeatRule = input.repeatRule ?? 'none'
+  const repeats = input.startAt !== null && repeatRule !== 'none' && input.repeatUntil != null
+  const dates = repeats ? repeatDates(input.startAt!, repeatRule, input.repeatUntil!) : [input.startAt]
+  const base: Occurrence = {
+    name: input.name,
+    detail: input.detail ?? '',
+    startAt: input.startAt,
+    endAt: input.endAt ?? null,
+    repeatRule,
+    repeatUntil: input.repeatUntil ?? null,
+    seriesId: repeats ? crypto.randomUUID() : null,
+  }
+  await writeEvents(occurrences(base, dates))
+}
+
+const dayKey = (ms: number | null | undefined) => (ms == null ? '' : format(ms, 'yyyy-MM-dd'))
+const nameKey = (e: CalendarEvent) => `${e.name.trim().toLocaleLowerCase()}\u0000${(e.detail ?? '').trim().toLocaleLowerCase()}`
+
+function sameSeries(a: CalendarEvent, b: CalendarEvent) {
+  if (a.seriesId || b.seriesId) return a.seriesId === b.seriesId
+  // Occurrences created before series ids existed: same name, detail and repeat settings.
+  return (a.repeatRule ?? 'none') !== 'none' && nameKey(a) === nameKey(b) && a.repeatRule === b.repeatRule && dayKey(a.repeatUntil) === dayKey(b.repeatUntil)
+}
+
+/**
+ * After an occurrence's repeat settings were edited, apply them to it and the occurrences that follow:
+ * later occurrences in its series that haven't started are replaced by copies of this one (name, detail,
+ * time and duration) up to the repeat-until date. "Never" just removes them. Started or done ones are kept.
+ */
+export async function applyRepeatChange(before: CalendarEvent, after: CalendarEvent, events: CalendarEvent[]) {
+  const changed = (before.repeatRule ?? 'none') !== (after.repeatRule ?? 'none') || dayKey(before.repeatUntil) !== dayKey(after.repeatUntil)
+  if (!changed || before.startAt === null) return
+  const following = events.filter(
+    (e) => e.id !== before.id && e.startAt !== null && e.startAt > before.startAt! && sameSeries(e, before),
+  )
+  const removed = following.filter((e) => e.status === 'scheduled')
+  const keptDays = new Set(following.filter((e) => e.status !== 'scheduled').map((e) => dayKey(e.startAt)))
+  const rule = after.repeatRule ?? 'none'
+  const repeats = rule !== 'none' && after.repeatUntil != null && after.startAt !== null
+  const seriesId = repeats ? before.seriesId ?? crypto.randomUUID() : before.seriesId ?? null
+  const dates = repeats
+    ? repeatDates(after.startAt!, rule, after.repeatUntil!).slice(1).filter((at) => !keptDays.has(dayKey(at)))
+    : []
+  await writeEvents(occurrences({ ...after, seriesId }, dates), removed.map((e) => e.id))
+  if (seriesId !== (before.seriesId ?? null)) {
+    if (MODE === 'demo') updateDemo(before.id, () => ({ seriesId }))
+    else await updateDoc(doc(getDb(), COLLECTION, before.id), { seriesId })
   }
 }
 
@@ -226,13 +301,16 @@ export async function removeEvent(event: CalendarEvent) {
 
 export async function updateEvent(
   event: CalendarEvent,
-  input: NewEventInput & { status?: CalendarEvent['status']; startedAt?: number | null },
+  input: NewEventInput & { status?: CalendarEvent['status']; startedAt?: number | null; completedAt?: number | null },
 ) {
-  // Marking an event done from the edit form records the completion time, like the "Done" button does.
-  const completedNow = input.status === 'done' && event.status !== 'done' && event.completedAt == null
+  // Marking an event done from the edit form records the completion time, like the "Done" button does,
+  // unless a finish time was entered.
+  const completedNow =
+    input.completedAt === undefined && input.status === 'done' && event.status !== 'done' && event.completedAt == null
   const now = Date.now()
   const patch = {
     name: input.name,
+    detail: input.detail ?? '',
     startAt: input.startAt === null ? null : Timestamp.fromMillis(input.startAt),
     endAt: input.endAt == null ? null : Timestamp.fromMillis(input.endAt),
     repeatRule: input.repeatRule ?? 'none',
@@ -240,14 +318,17 @@ export async function updateEvent(
     ...(input.status ? { status: input.status } : {}),
     // undefined = leave untouched; null = clear the recorded actual start
     ...(input.startedAt !== undefined ? { startedAt: input.startedAt === null ? null : Timestamp.fromMillis(input.startedAt) } : {}),
+    // undefined = leave untouched; null = clear the recorded finish
+    ...(input.completedAt !== undefined ? { completedAt: input.completedAt === null ? null : Timestamp.fromMillis(input.completedAt) } : {}),
     ...(completedNow ? { completedAt: Timestamp.fromMillis(now) } : {}),
   }
   if (MODE === 'demo') {
     updateDemo(event.id, () => ({
-      name: input.name, startAt: input.startAt, endAt: input.endAt ?? null,
+      name: input.name, detail: input.detail ?? '', startAt: input.startAt, endAt: input.endAt ?? null,
       repeatRule: input.repeatRule ?? 'none',
       repeatUntil: input.repeatUntil ?? null, ...(input.status ? { status: input.status } : {}),
       ...(input.startedAt !== undefined ? { startedAt: input.startedAt } : {}),
+      ...(input.completedAt !== undefined ? { completedAt: input.completedAt } : {}),
       ...(completedNow ? { completedAt: now } : {}),
     }))
     return

@@ -8,7 +8,7 @@ function describe(stats: TimeStats | null, verb: string, onTime: string) {
   const mean = Math.round(stats.meanMinutes)
   return <p className="text-sm text-muted-foreground">
     {verb} {mean === 0 ? <strong className="text-foreground">{onTime}</strong> : <strong className="text-foreground">{formatDuration(mean)} {mean < 0 ? 'early' : 'late'}</strong>}
-    , with a buffer of <strong className="text-foreground">{formatDuration(stats.bufferMinutes)}</strong> (1.5 × σ, {stats.n} occurrences).
+    , predicted within <strong className="text-foreground">±{formatDuration(stats.bufferMinutes)}</strong> of that average (1.5 × σ, {stats.n} occurrences).
   </p>
 }
 
@@ -24,6 +24,6 @@ export function ShiftControls({ event, events }: ShiftControlsProps) {
       <h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">End</h3>
       {event.endAt == null && !end ? <p className="text-sm text-muted-foreground">No end time set for this event.</p> : describe(end, 'This event usually ends', 'on time')}
     </div>
-    <p className="text-xs text-muted-foreground">Calculated from past occurrences with the same name, using a normal distribution of their actual start and end times versus the scheduled ones. Only occurrences with a recorded actual time are included.</p>
+    <p className="text-xs text-muted-foreground">Calculated from past occurrences with the same name and detail, using a normal distribution of their actual start and end times versus the scheduled ones. Only occurrences with a recorded actual time are included.</p>
   </section>
 }

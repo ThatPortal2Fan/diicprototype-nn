@@ -12,7 +12,7 @@ import {
 } from 'date-fns'
 import { EventPopover } from '@/components/calendar/event-popover'
 import type { CalendarEvent } from '@/lib/types'
-import { getEventEstimate } from '@/lib/event-utils'
+import { eventTitle, getEventEstimate } from '@/lib/event-utils'
 import { cn } from '@/lib/utils'
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -83,9 +83,10 @@ export function MonthView({ cursor, today, events, onSelectDay }: MonthViewProps
                     <EventPopover
                       event={e}
                       className={cn(
-                        'flex w-full items-center gap-1 truncate rounded-md px-1.5 py-0.5 text-left text-xs hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none',
+                        'flex w-full items-center gap-1 truncate rounded-md border border-transparent px-1.5 py-0.5 text-left text-xs hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none',
                         e.status === 'done' && 'text-muted-foreground line-through',
-                        (getEventEstimate(e, events).start?.bufferMinutes ?? 0) > 0 && 'opacity-75',
+                        // Has a usual start window (buffer): lighter shade with a dashed outline, as in the week view.
+                        (getEventEstimate(e, events).start?.bufferMinutes ?? 0) > 0 && 'border-dashed border-primary/60 bg-primary/5',
                       )}
                     >
                       <span
@@ -95,7 +96,7 @@ export function MonthView({ cursor, today, events, onSelectDay }: MonthViewProps
                         )}
                         aria-hidden="true"
                       />
-                      <span className="truncate font-medium">{e.name}</span>
+                      <span className="truncate font-medium">{eventTitle(e)}</span>
                       <span className="ml-auto shrink-0 text-muted-foreground tabular-nums">
                         {format(e.startAt, 'HH:mm')}
                       </span>
