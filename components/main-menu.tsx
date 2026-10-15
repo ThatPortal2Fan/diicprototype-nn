@@ -40,7 +40,7 @@ export function MainMenu() {
           <div className="flex items-center justify-between">
             <span className="inline-flex items-center gap-2 text-sm font-medium opacity-90">
               <Timer className="size-4" aria-hidden="true" />
-              Next event
+              Nearest event
             </span>
             <ArrowRight
               className="size-5 transition-transform group-hover:translate-x-0.5"
