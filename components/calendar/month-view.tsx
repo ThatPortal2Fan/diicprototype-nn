@@ -21,11 +21,12 @@ const MAX_VISIBLE = 3
 interface MonthViewProps {
   cursor: Date
   today: Date | null
+  selected: Date | null
   events: CalendarEvent[]
   onSelectDay: (day: Date) => void
 }
 
-export function MonthView({ cursor, today, events, onSelectDay }: MonthViewProps) {
+export function MonthView({ cursor, today, selected, events, onSelectDay }: MonthViewProps) {
   const days = eachDayOfInterval({
     start: startOfWeek(startOfMonth(cursor)),
     end: endOfWeek(endOfMonth(cursor)),
@@ -55,6 +56,7 @@ export function MonthView({ cursor, today, events, onSelectDay }: MonthViewProps
           const dayEvents = byDay.get(key) ?? []
           const inMonth = isSameMonth(day, cursor)
           const isToday = today ? isSameDay(day, today) : false
+          const isSelected = selected ? isSameDay(day, selected) : false
 
           return (
             <div
@@ -62,16 +64,20 @@ export function MonthView({ cursor, today, events, onSelectDay }: MonthViewProps
               className={cn(
                 'flex min-h-20 flex-col gap-1 border-r border-b border-border p-1 sm:min-h-28 sm:p-1.5',
                 !inMonth && 'bg-secondary/50',
+                isSelected && 'bg-accent/60',
               )}
             >
               <button
                 type="button"
                 onClick={() => onSelectDay(day)}
-                aria-label={`${format(day, 'EEEE, MMMM d')}, ${dayEvents.length} events. Open week view.`}
+                aria-pressed={isSelected}
+                aria-label={`${format(day, 'EEEE, MMMM d')}, ${dayEvents.length} events. Show events.`}
                 className={cn(
                   'flex size-7 items-center justify-center self-center rounded-full text-sm tabular-nums hover:bg-secondary focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none sm:self-end',
                   !inMonth && 'text-muted-foreground',
+                  isSelected && !isToday && 'font-semibold ring-2 ring-primary',
                   isToday && 'bg-primary font-semibold text-primary-foreground hover:bg-primary/90',
+                  isToday && isSelected && 'ring-2 ring-primary ring-offset-2 ring-offset-card',
                 )}
               >
                 {format(day, 'd')}
@@ -98,7 +104,7 @@ export function MonthView({ cursor, today, events, onSelectDay }: MonthViewProps
                       />
                       <span className="truncate font-medium">{eventTitle(e)}</span>
                       <span className="ml-auto shrink-0 text-muted-foreground tabular-nums">
-                        {format(e.startAt, 'HH:mm')}
+                        {format(e.startAt!, 'HH:mm')}
                       </span>
                     </EventPopover>
                   </li>

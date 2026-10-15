@@ -5,6 +5,7 @@ import { useState } from 'react'
 import { addMonths, addWeeks, endOfWeek, format, isSameMonth, startOfWeek } from 'date-fns'
 import { ChevronLeft, ChevronRight, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { DayEvents } from '@/components/calendar/day-events'
 import { MonthView } from '@/components/calendar/month-view'
 import { WeekView } from '@/components/calendar/week-view'
 import { PageHeader } from '@/components/page-header'
@@ -29,6 +30,9 @@ export function CalendarView() {
   const [view, setView] = useState<View>('month')
   const [cursor, setCursor] = useState<Date | null>(null)
   const activeCursor = cursor ?? (now ? new Date(now) : null)
+  // Day whose events are listed below the month grid; defaults to today.
+  const [selectedDay, setSelectedDay] = useState<Date | null>(null)
+  const activeDay = selectedDay ?? (now ? new Date(now) : null)
 
   function step(direction: 1 | -1) {
     if (!activeCursor) return
@@ -71,7 +75,7 @@ export function CalendarView() {
           <Button variant="outline" size="icon" onClick={() => step(-1)} aria-label={`Previous ${view}`}>
             <ChevronLeft aria-hidden="true" />
           </Button>
-          <Button variant="outline" onClick={() => setCursor(null)}>
+          <Button variant="outline" onClick={() => { setCursor(null); setSelectedDay(null) }}>
             Today
           </Button>
           <Button variant="outline" size="icon" onClick={() => step(1)} aria-label={`Next ${view}`}>
@@ -82,15 +86,26 @@ export function CalendarView() {
 
       {activeCursor ? (
         view === 'month' ? (
-          <MonthView
-            cursor={activeCursor}
-            today={now ? new Date(now) : null}
-            events={events}
-            onSelectDay={(day) => {
-              setCursor(day)
-              setView('week')
-            }}
-          />
+          <>
+            <MonthView
+              cursor={activeCursor}
+              today={now ? new Date(now) : null}
+              selected={activeDay}
+              events={events}
+              onSelectDay={setSelectedDay}
+            />
+            {activeDay ? (
+              <DayEvents
+                day={activeDay}
+                now={now}
+                events={events}
+                onOpenWeek={() => {
+                  setCursor(activeDay)
+                  setView('week')
+                }}
+              />
+            ) : null}
+          </>
         ) : (
           <WeekView cursor={activeCursor} now={now} events={events} />
         )
