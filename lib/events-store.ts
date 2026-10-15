@@ -224,7 +224,10 @@ export async function removeEvent(event: CalendarEvent) {
   await deleteDoc(doc(getDb(), COLLECTION, event.id))
 }
 
-export async function updateEvent(event: CalendarEvent, input: NewEventInput & { status?: CalendarEvent['status'] }) {
+export async function updateEvent(
+  event: CalendarEvent,
+  input: NewEventInput & { status?: CalendarEvent['status']; startedAt?: number | null },
+) {
   // Marking an event done from the edit form records the completion time, like the "Done" button does.
   const completedNow = input.status === 'done' && event.status !== 'done' && event.completedAt == null
   const now = Date.now()
@@ -235,6 +238,8 @@ export async function updateEvent(event: CalendarEvent, input: NewEventInput & {
     repeatRule: input.repeatRule ?? 'none',
     repeatUntil: input.repeatUntil == null ? null : Timestamp.fromMillis(input.repeatUntil),
     ...(input.status ? { status: input.status } : {}),
+    // undefined = leave untouched; null = clear the recorded actual start
+    ...(input.startedAt !== undefined ? { startedAt: input.startedAt === null ? null : Timestamp.fromMillis(input.startedAt) } : {}),
     ...(completedNow ? { completedAt: Timestamp.fromMillis(now) } : {}),
   }
   if (MODE === 'demo') {
@@ -242,6 +247,7 @@ export async function updateEvent(event: CalendarEvent, input: NewEventInput & {
       name: input.name, startAt: input.startAt, endAt: input.endAt ?? null,
       repeatRule: input.repeatRule ?? 'none',
       repeatUntil: input.repeatUntil ?? null, ...(input.status ? { status: input.status } : {}),
+      ...(input.startedAt !== undefined ? { startedAt: input.startedAt } : {}),
       ...(completedNow ? { completedAt: now } : {}),
     }))
     return

@@ -7,6 +7,7 @@ import { Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { NameCombobox } from '@/components/name-combobox'
 import { createEvent } from '@/lib/events-store'
 import { useEvents } from '@/hooks/use-events'
 import type { RepeatRule } from '@/lib/types'
@@ -41,9 +42,6 @@ export function AddEventForm() {
         .map((eventName) => [eventName.toLocaleLowerCase(), eventName]),
     ).values(),
   ).sort((a, b) => a.localeCompare(b))
-  const matchingNames = nameInput.trim()
-    ? existingNames.filter((eventName) => eventName.toLocaleLowerCase().includes(nameInput.trim().toLocaleLowerCase()))
-    : []
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -86,22 +84,16 @@ export function AddEventForm() {
       <div className="flex flex-col gap-5 rounded-2xl bg-card p-5 shadow-sm ring-1 ring-border">
         <div className="flex flex-col gap-2">
           <Label htmlFor="name">Event name</Label>
-          <Input
+          <NameCombobox
             id="name"
             name="name"
-            list="existing-event-names"
+            value={nameInput}
+            onValueChange={setNameInput}
+            options={existingNames}
             placeholder="e.g. Morning run"
             maxLength={MAX_NAME}
-            required
-            autoComplete="off"
-            value={nameInput}
-            onChange={(event) => setNameInput(event.target.value)}
-            className="h-11 text-base"
           />
-          <datalist id="existing-event-names">
-            {matchingNames.map((eventName) => <option key={eventName} value={eventName} />)}
-          </datalist>
-          <p className="text-xs text-muted-foreground">Start typing to find existing event names. Matching is case-insensitive, and choosing an existing name groups the event with its past occurrences, which the app uses to calculate timing and buffers automatically.</p>
+          <p className="text-xs text-muted-foreground">Start typing, or tap the arrow, to pick an existing event name. Matching is case-insensitive, and choosing an existing name groups the event with its past occurrences, which the app uses to calculate timing and buffers automatically.</p>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div className="flex flex-col gap-2"><Label htmlFor="date">Date</Label><Input id="date" name="date" type="date" min={MIN_DATE} max={MAX_DATE} defaultValue={initial.date} className="h-11 text-base" /></div>

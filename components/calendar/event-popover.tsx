@@ -30,6 +30,8 @@ export function EventPopover({ event, className, style, children }: EventPopover
   const date = event.startAt === null ? '' : format(event.startAt, 'yyyy-MM-dd')
   const time = event.startAt === null ? '' : format(event.startAt, 'HH:mm')
   const endTime = event.endAt == null ? '' : format(event.endAt, 'HH:mm')
+  const startedDate = event.startedAt == null ? '' : format(event.startedAt, 'yyyy-MM-dd')
+  const startedTime = event.startedAt == null ? '' : format(event.startedAt, 'HH:mm')
 
   async function save(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -46,13 +48,22 @@ export function EventPopover({ event, className, style, children }: EventPopover
     if (startAt !== null && Number.isNaN(startAt)) return setError('Invalid start time.')
     if (endAt !== null && Number.isNaN(endAt)) return setError('Invalid end time.')
     if (startAt !== null && endAt !== null && endAt < startAt) return setError('End time must be after start time.')
+    const sd = String(data.get('startedDate') ?? '')
+    const st = String(data.get('startedTime') ?? '')
+    if (Boolean(sd) !== Boolean(st)) return setError('Enter both a date and a time for when it actually started.')
+    if (sd && (sd < MIN_DATE || sd > MAX_DATE)) return setError('Actual start must be between October 2026 and December 2027.')
+    const startedAt = sd && st ? new Date(`${sd}T${st}`).getTime() : null
+    if (startedAt !== null && Number.isNaN(startedAt)) return setError('Invalid actual start time.')
+    if (startedAt !== null && event.completedAt != null && startedAt > event.completedAt) return setError('Actual start is after the recorded finish time.')
+    let status = String(data.get('status')) as CalendarEvent['status']
+    if (startedAt !== null && status === 'scheduled') status = 'in_progress' // it has started, so it is no longer just scheduled
     const repeatRule = String(data.get('repeatRule') ?? 'none') as RepeatRule
     const until = String(data.get('repeatUntil') ?? '')
     const repeatUntil = until ? new Date(`${until}T${t || '00:00'}`).getTime() : null
     if (until && (until < MIN_DATE || until > MAX_DATE || (d && until < d))) return setError('Invalid repeat-until date.')
     setSaving(true)
     try {
-      await updateEvent(event, { name, startAt, endAt, repeatRule, repeatUntil, status: String(data.get('status')) as CalendarEvent['status'] })
+      await updateEvent(event, { name, startAt, endAt, repeatRule, repeatUntil, status, startedAt })
       setEditing(false)
     } catch (err) { setError(err instanceof Error ? err.message : 'Could not save event.') }
     finally { setSaving(false) }
@@ -80,6 +91,14 @@ export function EventPopover({ event, className, style, children }: EventPopover
           <div className="flex flex-col gap-1"><Label htmlFor={`date-${event.id}`}>Date</Label><Input id={`date-${event.id}`} name="date" type="date" min={MIN_DATE} max={MAX_DATE} defaultValue={date} /></div>
           <div className="flex flex-col gap-1"><Label htmlFor={`time-${event.id}`}>Start time (optional)</Label><Input id={`time-${event.id}`} name="time" type="time" defaultValue={time} /></div>
           <div className="flex flex-col gap-1"><Label htmlFor={`end-${event.id}`}>End time (optional)</Label><Input id={`end-${event.id}`} name="endTime" type="time" defaultValue={endTime} /></div>
+          <div className="flex flex-col gap-1">
+            <Label htmlFor={`started-date-${event.id}`}>It actually started (optional)</Label>
+            <div className="grid grid-cols-2 gap-2">
+              <Input id={`started-date-${event.id}`} name="startedDate" type="date" min={MIN_DATE} max={MAX_DATE} defaultValue={startedDate} aria-label="Actual start date" />
+              <Input name="startedTime" type="time" defaultValue={startedTime} aria-label="Actual start time" />
+            </div>
+            <p className="text-xs text-muted-foreground">Used to calculate typical timing and buffers. Filling it in marks a scheduled event as started; clear it to remove.</p>
+          </div>
           <div className="flex flex-col gap-1"><Label htmlFor={`repeat-${event.id}`}>Repeats</Label><select id={`repeat-${event.id}`} name="repeatRule" defaultValue={event.repeatRule ?? 'none'} className="h-10 rounded-md border border-input bg-background px-3 text-sm"><option value="none">Never</option><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></div>
           <div className="flex flex-col gap-1"><Label htmlFor={`until-${event.id}`}>Repeat until</Label><Input id={`until-${event.id}`} name="repeatUntil" type="date" min={MIN_DATE} max={MAX_DATE} defaultValue={event.repeatUntil == null ? '' : format(event.repeatUntil, 'yyyy-MM-dd')} /></div>
           <div className="flex flex-col gap-1"><Label htmlFor={`status-${event.id}`}>Status</Label><select id={`status-${event.id}`} name="status" defaultValue={event.status} className="h-10 rounded-md border border-input bg-background px-3 text-sm"><option value="scheduled">Scheduled</option><option value="in_progress">In progress</option><option value="done">Done</option></select></div>

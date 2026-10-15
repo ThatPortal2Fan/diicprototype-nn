@@ -19,11 +19,27 @@ export function relativeLabel(startAt: number, now: number) {
   return diff > 0 ? `in ${formatDuration(diff)}` : `${formatDuration(diff)} ago`
 }
 
-/** The nearest event that has not been started or completed (overdue ones included). */
-export function getNearestEvent(events: CalendarEvent[]) {
-  return events
-    .filter((e) => e.status === 'scheduled')
-    .sort((a, b) => (a.startAt ?? Infinity) - (b.startAt ?? Infinity))[0]
+function byClosestTo(now: number | null) {
+  const distance = (e: CalendarEvent) =>
+    e.startAt === null ? Infinity : now === null ? e.startAt : Math.abs(e.startAt - now)
+  return (a: CalendarEvent, b: CalendarEvent) => {
+    const da = distance(a)
+    const db = distance(b)
+    return da === db ? 0 : da < db ? -1 : 1
+  }
+}
+
+/**
+ * The unfinished event (scheduled or in progress) whose start time is closest to now, past or future.
+ * Events without a start time come last. Before `now` is known, falls back to the earliest one.
+ */
+export function getNearestEvent(events: CalendarEvent[], now: number | null) {
+  return events.filter((e) => e.status !== 'done').sort(byClosestTo(now))[0]
+}
+
+/** Same as getNearestEvent, but only events that have not been started yet (these can be started). */
+export function getNearestScheduledEvent(events: CalendarEvent[], now: number | null) {
+  return events.filter((e) => e.status === 'scheduled').sort(byClosestTo(now))[0]
 }
 
 export function getInProgressEvents(events: CalendarEvent[]) {

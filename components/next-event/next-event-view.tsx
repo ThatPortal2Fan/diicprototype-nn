@@ -13,7 +13,7 @@ import { completeEvent, startEventNow } from '@/lib/events-store'
 import {
   getEventEstimate,
   getInProgressEvents,
-  getNearestEvent,
+  getNearestScheduledEvent,
   relativeLabel,
 } from '@/lib/event-utils'
 import type { CalendarEvent } from '@/lib/types'
@@ -24,7 +24,7 @@ export function NextEventView() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const nearest = getNearestEvent(events)
+  const nearest = getNearestScheduledEvent(events, now)
   const inProgress = getInProgressEvents(events)
 
   async function run(action: () => Promise<void>) {
