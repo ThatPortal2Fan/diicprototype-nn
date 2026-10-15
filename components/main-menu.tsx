@@ -25,7 +25,7 @@ export function MainMenu() {
           <p className="text-sm font-medium text-primary">
             {now ? format(now, 'EEEE, MMMM d') : '\u00a0'}
           </p>
-          <h1 className="text-3xl font-bold tracking-tight text-balance">Cadence</h1>
+          <h1 className="text-3xl font-bold tracking-tight text-balance">SteadyPace</h1>
         </div>
         <NotificationBell />
       </header>

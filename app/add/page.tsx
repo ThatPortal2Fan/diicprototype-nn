@@ -2,7 +2,7 @@ import type { Metadata } from 'next'
 import { AddEventForm } from '@/components/add-event-form'
 import { PageHeader } from '@/components/page-header'
 
-export const metadata: Metadata = { title: 'Add event · Cadence' }
+export const metadata: Metadata = { title: 'Add event · SteadyPace' }
 
 export default function AddEventPage() {
   return (

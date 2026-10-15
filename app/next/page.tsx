@@ -2,7 +2,7 @@ import type { Metadata } from 'next'
 import { NextEventView } from '@/components/next-event/next-event-view'
 import { PageHeader } from '@/components/page-header'
 
-export const metadata: Metadata = { title: 'Next event · Cadence' }
+export const metadata: Metadata = { title: 'Next event · SteadyPace' }
 
 export default function NextEventPage() {
   return (

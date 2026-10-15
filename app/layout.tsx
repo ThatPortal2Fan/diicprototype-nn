@@ -7,7 +7,7 @@ const geistSans = Geist({ subsets: ['latin'], variable: '--font-geist-sans' })
 const geistMono = Geist_Mono({ subsets: ['latin'], variable: '--font-geist-mono' })
 
 export const metadata: Metadata = {
-  title: 'Cadence — Calendar & event timing',
+  title: 'SteadyPace — Calendar & event timing',
   description:
     'Plan events, view them by month or week, and start, anticipate or delay your next event.',
   generator: 'v0.app',
