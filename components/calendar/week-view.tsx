@@ -1,18 +1,21 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { addDays, format, isSameDay, startOfDay, startOfWeek } from 'date-fns'
 import { EventPopover } from '@/components/calendar/event-popover'
 import type { CalendarEvent } from '@/lib/types'
 import { eventTitle, getBufferWindows, isInstant } from '@/lib/event-utils'
 import { cn } from '@/lib/utils'
 
+/** Default pixels per hour; pinching (or ctrl/trackpad zoom) scales it between the min and max, like Apple Calendar. */
 const HOUR_HEIGHT = 48
+const MIN_HOUR_HEIGHT = 20
+const MAX_HOUR_HEIGHT = 200
+const ZOOM_STORAGE_KEY = 'week-view-hour-height'
 const MIN_BLOCK_MINUTES = 15
 const DAY_MINUTES = 24 * 60
 /** Height of an instant event's label, which sits above its line. */
 const LABEL_HEIGHT = 15
-const LABEL_MINUTES = (LABEL_HEIGHT / HOUR_HEIGHT) * 60
 const HOURS = Array.from({ length: 24 }, (_, i) => i)
 
 interface WeekViewProps {
@@ -27,8 +30,10 @@ function minutesIntoDay(ms: number) {
 
 const toMinutes = (ms: number, event: CalendarEvent, start: number) => start + (ms - event.startAt!) / 60_000
 const clampDay = (minutes: number) => Math.min(Math.max(minutes, 0), DAY_MINUTES)
+const clampHeight = (px: number) => Math.min(Math.max(px, MIN_HOUR_HEIGHT), MAX_HOUR_HEIGHT)
 
-function layoutDay(dayEvents: CalendarEvent[], events: CalendarEvent[]) {
+function layoutDay(dayEvents: CalendarEvent[], events: CalendarEvent[], hourHeight: number) {
+  const labelMinutes = (LABEL_HEIGHT / hourHeight) * 60
   const sorted = dayEvents.filter((event) => event.startAt !== null).sort((a, b) => a.startAt! - b.startAt!)
   const laneEnds: number[] = []
   const placed = sorted.map((event) => {
@@ -42,7 +47,7 @@ function layoutDay(dayEvents: CalendarEvent[], events: CalendarEvent[]) {
       .filter((w) => w !== null && w.stats.bufferMinutes > 0)
       .map((w) => ({ from: clampDay(toMinutes(w!.from, event, start)), to: clampDay(toMinutes(w!.to, event, start)) }))
     // Lanes account for labels and buffers too, so they never overlap another event.
-    const top = Math.min(instant ? start - LABEL_MINUTES : start, ...bands.map((b) => b.from))
+    const top = Math.min(instant ? start - labelMinutes : start, ...bands.map((b) => b.from))
     const bottom = Math.max(end + 2, ...bands.map((b) => b.to))
     let lane = laneEnds.findIndex((laneEnd) => laneEnd <= top)
     if (lane === -1) {
@@ -63,15 +68,103 @@ const STATUS_COLORS: Record<CalendarEvent['status'], { line: string; text: strin
 
 export function WeekView({ cursor, now, events }: WeekViewProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
+  const [hourHeight, setHourHeight] = useState(HOUR_HEIGHT)
+  const heightRef = useRef(hourHeight)
+  heightRef.current = hourHeight
+  /** Keeps a point in time (hour) at a fixed distance from the top of the scroll area across a zoom. */
+  const anchorRef = useRef<{ hour: number; offset: number } | null>(null)
   const weekStart = startOfWeek(cursor)
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i))
 
+  // Restore this device's zoom, then scroll to a couple of hours before now.
+  useEffect(() => {
+    let stored = HOUR_HEIGHT
+    try {
+      const value = Number(localStorage.getItem(ZOOM_STORAGE_KEY))
+      if (value) stored = clampHeight(value)
+    } catch {}
+    const hour = Math.min(Math.max(new Date().getHours() - 2, 0), 7)
+    anchorRef.current = { hour, offset: 0 }
+    if (stored === heightRef.current && scrollRef.current) scrollRef.current.scrollTop = hour * stored
+    else setHourHeight(stored)
+  }, [])
+
+  useLayoutEffect(() => {
+    const el = scrollRef.current
+    const anchor = anchorRef.current
+    if (!el || !anchor) return
+    el.scrollTop = anchor.hour * hourHeight - anchor.offset
+  }, [hourHeight])
+
+  // Pinch to zoom the time axis (touch), and ctrl + wheel / trackpad pinch on desktop.
   useEffect(() => {
     const el = scrollRef.current
     if (!el) return
-    const hour = Math.max(new Date().getHours() - 2, 0)
-    el.scrollTop = Math.min(hour, 7) * HOUR_HEIGHT
+    let pinch: { distance: number; height: number; hour: number } | null = null
+    let frame = 0
+    const save = () => {
+      try {
+        localStorage.setItem(ZOOM_STORAGE_KEY, String(Math.round(heightRef.current)))
+      } catch {}
+    }
+    const zoomTo = (height: number, hour: number, offset: number) => {
+      anchorRef.current = { hour, offset }
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(() => setHourHeight(clampHeight(height)))
+    }
+    const midpoint = (touches: TouchList) => {
+      const [a, b] = [touches[0], touches[1]]
+      return {
+        distance: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY),
+        offset: (a.clientY + b.clientY) / 2 - el.getBoundingClientRect().top,
+      }
+    }
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length !== 2) return
+      e.preventDefault()
+      const { distance, offset } = midpoint(e.touches)
+      pinch = { distance, height: heightRef.current, hour: (el.scrollTop + offset) / heightRef.current }
+    }
+    const onTouchMove = (e: TouchEvent) => {
+      if (!pinch || e.touches.length !== 2) return
+      e.preventDefault() // stop the browser zooming the page
+      const { distance, offset } = midpoint(e.touches)
+      zoomTo(pinch.height * (distance / pinch.distance), pinch.hour, offset)
+    }
+    const onTouchEnd = (e: TouchEvent) => {
+      if (!pinch || e.touches.length >= 2) return
+      pinch = null
+      save()
+    }
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey) return // trackpad pinches arrive as ctrl + wheel
+      e.preventDefault()
+      const offset = e.clientY - el.getBoundingClientRect().top
+      zoomTo(heightRef.current * Math.exp(-e.deltaY * 0.01), (el.scrollTop + offset) / heightRef.current, offset)
+      save()
+    }
+    const stopGesture = (e: Event) => e.preventDefault() // iOS Safari's own pinch-zoom events
+    el.addEventListener('touchstart', onTouchStart, { passive: false })
+    el.addEventListener('touchmove', onTouchMove, { passive: false })
+    el.addEventListener('touchend', onTouchEnd)
+    el.addEventListener('touchcancel', onTouchEnd)
+    el.addEventListener('wheel', onWheel, { passive: false })
+    el.addEventListener('gesturestart', stopGesture)
+    el.addEventListener('gesturechange', stopGesture)
+    return () => {
+      cancelAnimationFrame(frame)
+      el.removeEventListener('touchstart', onTouchStart)
+      el.removeEventListener('touchmove', onTouchMove)
+      el.removeEventListener('touchend', onTouchEnd)
+      el.removeEventListener('touchcancel', onTouchEnd)
+      el.removeEventListener('wheel', onWheel)
+      el.removeEventListener('gesturestart', stopGesture)
+      el.removeEventListener('gesturechange', stopGesture)
+    }
   }, [])
+
+  // Zoomed far out, label every other hour so the labels don't collide.
+  const labelEvery = hourHeight < 28 ? 2 : 1
 
   return (
     <div className="overflow-hidden rounded-2xl bg-card shadow-sm ring-1 ring-border">
@@ -95,18 +188,18 @@ export function WeekView({ cursor, now, events }: WeekViewProps) {
         })}
       </div>
 
-      <div ref={scrollRef} className="h-[65dvh] overflow-y-auto">
+      <div ref={scrollRef} className="h-[65dvh] touch-pan-y overflow-y-auto overscroll-contain">
         <div
           className="relative grid grid-cols-[3rem_repeat(7,minmax(0,1fr))]"
-          style={{ height: HOUR_HEIGHT * 24 }}
+          style={{ height: hourHeight * 24 }}
         >
           <div className="relative" aria-hidden="true">
             {HOURS.map((h) =>
-              h === 0 ? null : (
+              h === 0 || h % labelEvery !== 0 ? null : (
                 <span
                   key={h}
                   className="absolute right-2 -translate-y-1/2 text-[10px] text-muted-foreground tabular-nums"
-                  style={{ top: h * HOUR_HEIGHT }}
+                  style={{ top: h * hourHeight }}
                 >
                   {format(new Date(2000, 0, 1, h), 'ha').toLowerCase()}
                 </span>
@@ -116,7 +209,7 @@ export function WeekView({ cursor, now, events }: WeekViewProps) {
 
           {days.map((day) => {
             const dayEvents = events.filter((e) => e.startAt !== null && isSameDay(e.startAt, day))
-            const { placed, lanes } = layoutDay(dayEvents, events)
+            const { placed, lanes } = layoutDay(dayEvents, events, hourHeight)
             const isToday = now ? isSameDay(day, now) : false
 
             return (
@@ -130,13 +223,13 @@ export function WeekView({ cursor, now, events }: WeekViewProps) {
                   <div
                     key={h}
                     className="border-b border-border/60"
-                    style={{ height: HOUR_HEIGHT }}
+                    style={{ height: hourHeight }}
                     aria-hidden="true"
                   />
                 ))}
 
                 {placed.map(({ event, start, end, instant, bands, lane }) => {
-                  const top = (start / 60) * HOUR_HEIGHT
+                  const top = (start / 60) * hourHeight
                   const left = `calc(${(lane / lanes) * 100}% + 2px)`
                   const width = `calc(${100 / lanes}% - 4px)`
                   const colors = STATUS_COLORS[event.status]
@@ -147,8 +240,8 @@ export function WeekView({ cursor, now, events }: WeekViewProps) {
                       key={i}
                       className={cn('pointer-events-none absolute border-y-2 border-dotted', colors.band)}
                       style={{
-                        top: (band.from / 60) * HOUR_HEIGHT,
-                        height: ((band.to - band.from) / 60) * HOUR_HEIGHT,
+                        top: (band.from / 60) * hourHeight,
+                        height: ((band.to - band.from) / 60) * hourHeight,
                         left,
                         width,
                       }}
@@ -178,7 +271,7 @@ export function WeekView({ cursor, now, events }: WeekViewProps) {
                       ) : (
                         <EventPopover
                           event={event}
-                          style={{ top, left, width, height: ((end - start) / 60) * HOUR_HEIGHT - 1 }}
+                          style={{ top, left, width, height: ((end - start) / 60) * hourHeight - 1 }}
                           className={cn(
                             'absolute flex flex-col overflow-hidden rounded-md border-l-[3px] px-1.5 py-1 text-left text-[11px] leading-tight shadow-sm ring-1 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none',
                             event.status === 'done' &&
@@ -201,7 +294,7 @@ export function WeekView({ cursor, now, events }: WeekViewProps) {
                 {isToday && now ? (
                   <div
                     className="pointer-events-none absolute inset-x-0 z-10 flex items-center"
-                    style={{ top: (minutesIntoDay(now) / 60) * HOUR_HEIGHT }}
+                    style={{ top: (minutesIntoDay(now) / 60) * hourHeight }}
                     aria-hidden="true"
                   >
                     <span className="-ml-1 size-2 rounded-full bg-destructive" />
