@@ -20,7 +20,7 @@ import {
 } from '@/lib/event-utils'
 import type { CalendarEvent } from '@/lib/types'
 
-export function NextEventView() {
+export function NextEventView({ eventId }: { eventId?: string }) {
   const { events, status } = useEvents()
   const now = useNow()
   const [busy, setBusy] = useState(false)
@@ -43,6 +43,35 @@ export function NextEventView() {
 
   if (status === 'loading') {
     return <div className="h-64 animate-pulse rounded-2xl bg-card ring-1 ring-border" />
+  }
+
+  if (eventId) {
+    const event = events.find((e) => e.id === eventId)
+    return (
+      <div className="flex flex-col gap-4">
+        {!event ? (
+          <div className="flex flex-col items-center gap-2 rounded-2xl bg-card px-6 py-12 text-center shadow-sm ring-1 ring-border">
+            <p className="text-lg font-semibold">Event not found</p>
+            <p className="text-sm text-muted-foreground">It may have been deleted.</p>
+          </div>
+        ) : event.status === 'in_progress' ? (
+          <InProgressCard event={event} now={now} busy={busy} onComplete={() => run(() => completeEvent(event))} />
+        ) : event.status === 'scheduled' ? (
+          <NearestCard event={event} events={events} now={now} busy={busy} onStart={() => run(() => startEventNow(event))} />
+        ) : (
+          <DoneCard event={event} />
+        )}
+        {event ? <ShiftControls event={event} busy={busy} events={events} /> : null}
+        {error ? (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+        ) : null}
+        <Button render={<Link href="/next" />} nativeButton={false} variant="outline" className="rounded-xl">
+          See the nearest event
+        </Button>
+      </div>
+    )
   }
 
   return (
@@ -177,6 +206,21 @@ function InProgressCard({
         <CheckCircle2 aria-hidden="true" />
         Done
       </Button>
+    </section>
+  )
+}
+
+function DoneCard({ event }: { event: CalendarEvent }) {
+  return (
+    <section className="flex flex-col gap-1 rounded-2xl bg-card p-5 shadow-sm ring-1 ring-border">
+      <div className="flex items-start justify-between gap-3">
+        <h2 className="text-2xl font-semibold text-balance">{eventTitle(event)}</h2>
+        <Badge variant="outline">Done</Badge>
+      </div>
+      <p className="text-sm text-muted-foreground">
+        {event.startAt === null ? 'Date/time not set' : format(event.startAt, 'EEEE, MMMM d · HH:mm')}
+        {event.completedAt != null ? ` · finished ${format(event.completedAt, 'HH:mm')}` : ''}
+      </p>
     </section>
   )
 }

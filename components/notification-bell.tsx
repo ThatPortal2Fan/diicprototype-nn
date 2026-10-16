@@ -58,7 +58,7 @@ export function NotificationBell() {
               return (
                 <li key={n.id}>
                   <Link
-                    href="/next"
+                    href={`/next?event=${encodeURIComponent(n.event.id)}`}
                     className="flex items-start gap-3 px-4 py-3 hover:bg-secondary focus-visible:bg-secondary focus-visible:outline-none"
                   >
                     <span
