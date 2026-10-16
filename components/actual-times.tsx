@@ -23,7 +23,7 @@ export type ActualTimes = ReturnType<typeof useActualTimes>
 
 /**
  * State for the "when it actually..." fields and the status. The fields start blank (null = not clicked since the
- * form opened, which keeps what was recorded); the first click fills them with the recorded or predicted time.
+ * form opened, which keeps what was recorded); clicking an empty one fills it with the recorded or predicted time.
  * The status follows the fields, but never drops below the saved status (or the one last picked by hand).
  * `scheduled` holds the event's (possibly being edited) scheduled start and end.
  */
@@ -56,8 +56,8 @@ export function useActualTimes(event: CalendarEvent, events: CalendarEvent[], sc
     instant, status, started, completed,
     hasStartHistory: startStats !== null, hasEndHistory: endWindow !== null,
     recordedStart: event.startedAt, recordedEnd: event.completedAt ?? null,
-    fillStarted() { if (!started) changeStarted(toInput(event.startedAt ?? predictedStart(startAt))) },
-    fillCompleted() { if (!completed) changeCompleted(toInput(event.completedAt ?? predictedEnd(startAt, endAt))) },
+    fillStarted() { if (!hasValue(started)) changeStarted(toInput(event.startedAt ?? predictedStart(startAt))) },
+    fillCompleted() { if (!hasValue(completed)) changeCompleted(toInput(event.completedAt ?? predictedEnd(startAt, endAt))) },
     changeStarted, changeCompleted,
     clearStarted() { changeStarted(EMPTY) },
     clearCompleted() { changeCompleted(EMPTY) },
@@ -160,7 +160,7 @@ interface ActualTimeFieldProps {
   hint: string
 }
 
-/** A date + time pair that starts blank and fills itself in on the first click (focus). */
+/** A date + time pair that fills itself in whenever it is clicked (focused) while empty. */
 function ActualTimeField({ id, label, value, onFill, onChange, onClear, hint }: ActualTimeFieldProps) {
   const current = value ?? EMPTY
   return (
