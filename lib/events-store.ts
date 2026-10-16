@@ -15,6 +15,7 @@ import {
 } from 'firebase/firestore'
 import { addDays, addMonths, addWeeks, format } from 'date-fns'
 import { MAX_AT, MIN_AT } from './bounds'
+import { isInstant } from './event-utils'
 import { getDb, isFirebaseConfigured } from './firebase'
 import type { CalendarEvent, NewEventInput, RepeatRule } from './types'
 
@@ -264,6 +265,19 @@ export async function shiftEvent(event: CalendarEvent, minutes: number) {
 
 export async function startEventNow(event: CalendarEvent) {
   const now = Date.now()
+  // Instant events have no "in progress": starting one means it happened now, so it is done.
+  if (isInstant(event)) {
+    if (MODE === 'demo') {
+      updateDemo(event.id, () => ({ status: 'done', startedAt: now, completedAt: now }))
+      return
+    }
+    await updateDoc(doc(getDb(), COLLECTION, event.id), {
+      status: 'done',
+      startedAt: Timestamp.fromMillis(now),
+      completedAt: Timestamp.fromMillis(now),
+    })
+    return
+  }
   if (MODE === 'demo') {
     updateDemo(event.id, (e) => ({
       status: 'in_progress',

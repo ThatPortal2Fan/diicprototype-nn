@@ -15,6 +15,7 @@ import {
   getEventEstimate,
   getInProgressEvents,
   getNearestScheduledEvent,
+  isInstant,
   relativeLabel,
 } from '@/lib/event-utils'
 import type { CalendarEvent } from '@/lib/types'
@@ -142,8 +143,8 @@ function NearestCard({
 
 
       <Button size="lg" className="h-14 rounded-xl text-base" disabled={busy} onClick={onStart}>
-        {busy ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Play className="fill-current" aria-hidden="true" />}
-        Start it now
+        {busy ? <Loader2 className="animate-spin" aria-hidden="true" /> : isInstant(event) ? <CheckCircle2 aria-hidden="true" /> : <Play className="fill-current" aria-hidden="true" />}
+        {isInstant(event) ? 'It happened now' : 'Start it now'}
       </Button>
     </section>
   )

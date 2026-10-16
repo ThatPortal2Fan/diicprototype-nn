@@ -17,6 +17,8 @@ import type { CalendarEvent, RepeatRule } from '@/lib/types'
 
 const STATUS_LABEL: Record<CalendarEvent['status'], string> = { scheduled: 'Scheduled', in_progress: 'In progress', done: 'Done' }
 const MINUTE = 60_000
+type DateTimeInput = { date: string; time: string }
+const toInput = (at: number | null): DateTimeInput => (at === null ? { date: '', time: '' } : { date: format(at, 'yyyy-MM-dd'), time: format(at, 'HH:mm') })
 interface EventPopoverProps { event: CalendarEvent; className?: string; style?: CSSProperties; children: ReactNode }
 
 export function EventPopover({ event, className, style, children }: EventPopoverProps) {
@@ -25,8 +27,11 @@ export function EventPopover({ event, className, style, children }: EventPopover
   const [editing, setEditing] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [startedTouched, setStartedTouched] = useState(false)
-  const [completedTouched, setCompletedTouched] = useState(false)
+  // The "when it actually..." fields start blank (null = not clicked yet since opening the form). The first click fills
+  // them with the recorded or predicted time and moves the status along.
+  const [started, setStarted] = useState<DateTimeInput | null>(null)
+  const [completed, setCompleted] = useState<DateTimeInput | null>(null)
+  const [statusInput, setStatusInput] = useState(event.status)
   const [detailInput, setDetailInput] = useState(event.detail ?? '')
   const estimate = getEventEstimate(event, events)
   const startStats = estimate.start
@@ -34,9 +39,12 @@ export function EventPopover({ event, className, style, children }: EventPopover
   const date = event.startAt === null ? '' : format(event.startAt, 'yyyy-MM-dd')
   const time = event.startAt === null ? '' : format(event.startAt, 'HH:mm')
   const endTime = event.endAt == null ? '' : format(event.endAt, 'HH:mm')
-  // Instant events (no end time) have no "actually finished"; follows the end time field while editing.
+  // Follow the date and times while editing: instant events (no end time) have no "in progress" or "actually ended".
+  const [dateInput, setDateInput] = useState(date)
+  const [timeInput, setTimeInput] = useState(time)
   const [endInput, setEndInput] = useState(endTime)
-  const [finishKey, setFinishKey] = useState(endTime)
+  const formInstant = !dateInput || !timeInput || !endInput || endInput <= timeInput
+  const shownStatus = formInstant && statusInput === 'in_progress' ? 'done' : statusInput
   const windows = getBufferWindows(event, events)
   const details = detailOptions(events, event.name)
   // Until an actual start / finish is recorded, suggest the predicted time: the average of past occurrences
@@ -45,13 +53,26 @@ export function EventPopover({ event, className, style, children }: EventPopover
   const endOffset = (windows.end?.stats.meanMinutes ?? 0) * MINUTE
   const predictedEnd = (startAt: number | null, endAt: number | null | undefined) =>
     startAt === null || endAt == null || endAt <= startAt ? null : endAt + endOffset
-  const startedDefault = event.startedAt ?? (event.startAt === null ? null : event.startAt + startOffset)
-  const startedDate = startedDefault == null ? '' : format(startedDefault, 'yyyy-MM-dd')
-  const startedTime = startedDefault == null ? '' : format(startedDefault, 'HH:mm')
-  const typedEnd = date && endInput ? new Date(`${date}T${endInput}`).getTime() : null
-  const completedDefault = event.completedAt ?? predictedEnd(event.startAt, typedEnd)
-  const completedDate = completedDefault == null ? '' : format(completedDefault, 'yyyy-MM-dd')
-  const completedTime = completedDefault == null ? '' : format(completedDefault, 'HH:mm')
+  const typedStart = dateInput && timeInput ? new Date(`${dateInput}T${timeInput}`).getTime() : null
+  const typedEnd = dateInput && endInput ? new Date(`${dateInput}T${endInput}`).getTime() : null
+  const startedDefault = event.startedAt ?? (typedStart === null ? null : typedStart + startOffset)
+  const completedDefault = event.completedAt ?? predictedEnd(typedStart, typedEnd)
+
+  function fillStarted() {
+    if (started) return
+    setStarted(toInput(startedDefault))
+    // An instant event just happens; otherwise it is now under way (a finished event stays done).
+    setStatusInput((s) => (formInstant ? 'done' : s === 'done' ? s : 'in_progress'))
+  }
+  function fillCompleted() {
+    if (completed) return
+    setCompleted(toInput(completedDefault))
+    setStatusInput('done')
+  }
+  function openEditor() {
+    setStarted(null); setCompleted(null); setStatusInput(event.status)
+    setDateInput(date); setTimeInput(time); setEndInput(endTime); setDetailInput(event.detail ?? ''); setEditing(true)
+  }
 
   async function save(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -69,38 +90,37 @@ export function EventPopover({ event, className, style, children }: EventPopover
     if (startAt !== null && Number.isNaN(startAt)) return setError('Invalid start time.')
     if (endAt !== null && Number.isNaN(endAt)) return setError('Invalid end time.')
     if (startAt !== null && endAt !== null && endAt < startAt) return setError('End time must be after start time.')
-    let status = String(data.get('status')) as CalendarEvent['status']
+    const instant = startAt === null || endAt === null || endAt <= startAt
+    const status = String(data.get('status')) as CalendarEvent['status']
+    const startedWord = instant ? 'happened' : 'started'
+    // Fields left blank (never clicked) keep what was recorded. Once clicked, a cleared field removes it.
+    let startedAt: number | null | undefined
+    if (!started) {
+      // Nothing recorded yet but marked in progress / done: assume the predicted start (following any new start time).
+      startedAt = event.startedAt != null ? undefined : status === 'scheduled' || startAt === null ? null : startAt + startOffset
+    } else {
+      if (Boolean(started.date) !== Boolean(started.time)) return setError(`Enter both a date and a time for when it actually ${startedWord}.`)
+      if (started.date && (started.date < MIN_DATE || started.date > MAX_DATE)) return setError(`When it actually ${startedWord} must be between ${BOUNDS_LABEL}.`)
+      startedAt = started.date ? new Date(`${started.date}T${started.time}`).getTime() : null
+      if (startedAt !== null && Number.isNaN(startedAt)) return setError(`Invalid time for when it actually ${startedWord}.`)
+    }
     let completedAt: number | null | undefined
-    if (startAt === null || endAt === null || endAt <= startAt) {
-      completedAt = undefined // instant event: no finish to record from the form
-    } else if (event.completedAt == null && !completedTouched) {
-      // Suggested value left as is: only record it once the event is done (following any new times).
-      // undefined lets the store record "now" when there is no scheduled time to follow.
+    if (instant) {
+      // It ends when it happens; otherwise undefined lets the store record "now" when it is marked done.
+      completedAt = started ? startedAt : undefined
+    } else if (!completed) {
+      // Nothing recorded yet but marked done: assume the predicted end (following any new times).
       const predicted = predictedEnd(startAt, endAt)
-      completedAt = status === 'done' && predicted !== null ? predicted : undefined
+      completedAt = event.completedAt == null && status === 'done' && predicted !== null ? predicted : undefined
     } else {
-      const cd = String(data.get('completedDate') ?? '')
-      const ct = String(data.get('completedTime') ?? '')
-      if (Boolean(cd) !== Boolean(ct)) return setError('Enter both a date and a time for when it actually finished.')
-      if (cd && (cd < MIN_DATE || cd > MAX_DATE)) return setError(`Actual finish must be between ${BOUNDS_LABEL}.`)
-      completedAt = cd && ct ? new Date(`${cd}T${ct}`).getTime() : null
-      if (completedAt !== null && Number.isNaN(completedAt)) return setError('Invalid actual finish time.')
-      if (completedAt !== null && event.completedAt == null) status = 'done' // a finish was just entered, so it is done
+      if (Boolean(completed.date) !== Boolean(completed.time)) return setError('Enter both a date and a time for when it actually ended.')
+      if (completed.date && (completed.date < MIN_DATE || completed.date > MAX_DATE)) return setError(`When it actually ended must be between ${BOUNDS_LABEL}.`)
+      completedAt = completed.date ? new Date(`${completed.date}T${completed.time}`).getTime() : null
+      if (completedAt !== null && Number.isNaN(completedAt)) return setError('Invalid time for when it actually ended.')
     }
-    let startedAt: number | null
-    if (event.startedAt == null && !startedTouched) {
-      // Suggested value left as is: only record it once the event is in progress or done (following any new start time).
-      startedAt = status === 'scheduled' || startAt === null ? null : startAt + startOffset
-    } else {
-      const sd = String(data.get('startedDate') ?? '')
-      const st = String(data.get('startedTime') ?? '')
-      if (Boolean(sd) !== Boolean(st)) return setError('Enter both a date and a time for when it actually started.')
-      if (sd && (sd < MIN_DATE || sd > MAX_DATE)) return setError(`Actual start must be between ${BOUNDS_LABEL}.`)
-      startedAt = sd && st ? new Date(`${sd}T${st}`).getTime() : null
-      if (startedAt !== null && Number.isNaN(startedAt)) return setError('Invalid actual start time.')
-    }
-    if (startedAt !== null && completedAt != null && startedAt > completedAt) return setError('Actual start must be before the actual finish.')
-    if (startedAt !== null && status === 'scheduled') status = 'in_progress' // it has started, so it is no longer just scheduled
+    const actualStart = startedAt === undefined ? event.startedAt : startedAt
+    const actualEnd = completedAt === undefined ? event.completedAt : completedAt
+    if (!instant && actualStart != null && actualEnd != null && actualStart > actualEnd) return setError('It must have actually started before it actually ended.')
     const repeatRule = String(data.get('repeatRule') ?? 'none') as RepeatRule
     const until = String(data.get('repeatUntil') ?? '')
     const repeatUntil = until ? new Date(`${until}T${t || '00:00'}`).getTime() : null
@@ -109,7 +129,7 @@ export function EventPopover({ event, className, style, children }: EventPopover
     setSaving(true)
     try {
       await updateEvent(event, { name, detail, startAt, endAt, repeatRule, repeatUntil, status, startedAt, completedAt })
-      await applyRepeatChange(event, { ...event, name, detail, startAt, endAt, repeatRule, repeatUntil, status, startedAt }, events)
+      await applyRepeatChange(event, { ...event, name, detail, startAt, endAt, repeatRule, repeatUntil, status, startedAt: actualStart ?? null }, events)
       setEditing(false)
     } catch (err) { setError(err instanceof Error ? err.message : 'Could not save event.') }
     finally { setSaving(false) }
@@ -130,7 +150,7 @@ export function EventPopover({ event, className, style, children }: EventPopover
             {windows.end ? <p className="pl-6">Predicted end {format(windows.end.from, 'HH:mm')}–{format(windows.end.to, 'HH:mm')}</p> : null}
           </div>
           <div className="flex gap-2">
-            <Button size="sm" className="flex-1" onClick={() => { setStartedTouched(false); setCompletedTouched(false); setEndInput(endTime); setDetailInput(event.detail ?? ''); setEditing(true) }}><Pencil aria-hidden="true" />Edit event</Button>
+            <Button size="sm" className="flex-1" onClick={openEditor}><Pencil aria-hidden="true" />Edit event</Button>
             <Button variant="destructive" size="sm" disabled={deleting} onClick={async () => { setDeleting(true); try { await removeEvent(event) } finally { setDeleting(false) } }}><Trash2 aria-hidden="true" />Delete</Button>
           </div>
         </> : <form onSubmit={save} className="flex flex-col gap-3">
@@ -140,33 +160,49 @@ export function EventPopover({ event, className, style, children }: EventPopover
             <Label htmlFor={`detail-${event.id}`}>Detail (optional)</Label>
             <NameCombobox id={`detail-${event.id}`} name="detail" value={detailInput} onValueChange={setDetailInput} options={details} maxLength={100} required={false} optionsLabel="existing details" className="h-8 text-sm" />
           </div>
-          <div className="flex flex-col gap-1"><Label htmlFor={`date-${event.id}`}>Date</Label><Input id={`date-${event.id}`} name="date" type="date" min={MIN_DATE} max={MAX_DATE} defaultValue={date} /></div>
-          <div className="flex flex-col gap-1"><Label htmlFor={`time-${event.id}`}>Start time (optional)</Label><Input id={`time-${event.id}`} name="time" type="time" defaultValue={time} /></div>
+          <div className="flex flex-col gap-1"><Label htmlFor={`date-${event.id}`}>Date</Label><Input id={`date-${event.id}`} name="date" type="date" min={MIN_DATE} max={MAX_DATE} defaultValue={date} onChange={(e) => setDateInput(e.target.value)} /></div>
+          <div className="flex flex-col gap-1"><Label htmlFor={`time-${event.id}`}>Start time (optional)</Label><Input id={`time-${event.id}`} name="time" type="time" defaultValue={time} onChange={(e) => setTimeInput(e.target.value)} /></div>
           <div className="flex flex-col gap-1"><Label htmlFor={`end-${event.id}`}>End time (optional)</Label><Input id={`end-${event.id}`} name="endTime" type="time" defaultValue={endTime} onChange={(e) => setEndInput(e.target.value)} /></div>
-          <div className="flex flex-col gap-1">
-            <Label htmlFor={`started-date-${event.id}`}>It actually started (optional)</Label>
-            <div className="grid grid-cols-2 gap-2" onChange={() => setStartedTouched(true)}>
-              <Input id={`started-date-${event.id}`} name="startedDate" type="date" min={MIN_DATE} max={MAX_DATE} defaultValue={startedDate} aria-label="Actual start date" />
-              <Input name="startedTime" type="time" defaultValue={startedTime} aria-label="Actual start time" />
-            </div>
-            <p className="text-xs text-muted-foreground">{event.startedAt == null ? `Pre-filled with ${startStats ? 'the predicted start (average of past occurrences)' : 'the scheduled start'}; only change it if it actually started at a different time. Recorded when the event is in progress or done. ` : ''}Used to predict future timing. Changing it marks a scheduled event as started; clear it to remove.</p>
-          </div>
-          {endInput ? <div className="flex flex-col gap-1">
-            <Label htmlFor={`completed-date-${event.id}`}>It actually finished (optional)</Label>
-            {/* Re-mounted while untouched so the pre-fill follows the end time as it is typed. */}
-            <div key={completedTouched ? finishKey : endInput} className="grid grid-cols-2 gap-2" onChange={() => { if (!completedTouched) { setFinishKey(endInput); setCompletedTouched(true) } }}>
-              <Input id={`completed-date-${event.id}`} name="completedDate" type="date" min={MIN_DATE} max={MAX_DATE} defaultValue={completedDate} aria-label="Actual finish date" />
-              <Input name="completedTime" type="time" defaultValue={completedTime} aria-label="Actual finish time" />
-            </div>
-            <p className="text-xs text-muted-foreground">{event.completedAt == null ? `Pre-filled with ${windows.end ? 'the predicted end (average of past occurrences)' : 'the scheduled end'}; only change it if it actually finished at a different time. Recorded when the event is done. ` : ''}Used to predict future end times. Changing it marks the event as done; clear it to remove.</p>
-          </div> : null}
+          <ActualTimeField
+            id={`started-date-${event.id}`}
+            label={formInstant ? 'When it actually happened (optional)' : 'When it actually started (optional)'}
+            value={started}
+            onFill={fillStarted}
+            onChange={setStarted}
+            hint={`${event.startedAt != null ? `Recorded ${format(event.startedAt, 'MMM d, HH:mm')}. Click to change it; clear it to remove.` : `Click to fill in ${startStats ? 'the predicted time (average of past occurrences)' : 'the scheduled time'}, then adjust it if needed.`} Filling it in marks the event as ${formInstant ? 'done' : 'in progress'}. Used to predict future timing.`}
+          />
+          {formInstant ? null : <ActualTimeField
+            id={`completed-date-${event.id}`}
+            label="When it actually ended (optional)"
+            value={completed}
+            onFill={fillCompleted}
+            onChange={setCompleted}
+            hint={`${event.completedAt != null ? `Recorded ${format(event.completedAt, 'MMM d, HH:mm')}. Click to change it; clear it to remove.` : `Click to fill in ${windows.end ? 'the predicted end (average of past occurrences)' : 'the scheduled end'}, then adjust it if needed.`} Filling it in marks the event as done. Used to predict future end times.`}
+          />}
           <div className="flex flex-col gap-1"><Label htmlFor={`repeat-${event.id}`}>Repeats</Label><select id={`repeat-${event.id}`} name="repeatRule" defaultValue={event.repeatRule ?? 'none'} className="h-10 rounded-md border border-input bg-background px-3 text-sm"><option value="none">Never</option><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></div>
           <div className="flex flex-col gap-1"><Label htmlFor={`until-${event.id}`}>Repeat until</Label><Input id={`until-${event.id}`} name="repeatUntil" type="date" min={MIN_DATE} max={MAX_DATE} defaultValue={event.repeatUntil == null ? '' : format(event.repeatUntil, 'yyyy-MM-dd')} /><p className="text-xs text-muted-foreground">Changing the repeat applies to this and the following occurrences that haven&apos;t started: they are recreated from this one, or removed for &ldquo;Never&rdquo;.</p></div>
-          <div className="flex flex-col gap-1"><Label htmlFor={`status-${event.id}`}>Status</Label><select id={`status-${event.id}`} name="status" defaultValue={event.status} className="h-10 rounded-md border border-input bg-background px-3 text-sm"><option value="scheduled">Scheduled</option><option value="in_progress">In progress</option><option value="done">Done</option></select></div>
+          <div className="flex flex-col gap-1"><Label htmlFor={`status-${event.id}`}>Status</Label><select id={`status-${event.id}`} name="status" value={shownStatus} onChange={(e) => setStatusInput(e.target.value as CalendarEvent['status'])} className="h-10 rounded-md border border-input bg-background px-3 text-sm"><option value="scheduled">Scheduled</option>{formInstant ? null : <option value="in_progress">In progress</option>}<option value="done">Done</option></select></div>
           {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
           <div className="flex gap-2"><Button type="button" variant="outline" className="flex-1" onClick={() => setEditing(false)}>Cancel</Button><Button type="submit" className="flex-1" disabled={saving}>{saving ? 'Saving…' : 'Save'}</Button></div>
         </form>}
       </PopoverContent>
     </Popover>
+  )
+}
+
+interface ActualTimeFieldProps { id: string; label: string; value: DateTimeInput | null; onFill: () => void; onChange: (value: DateTimeInput) => void; hint: string }
+
+/** A date + time pair that starts blank and fills itself in on the first click (focus). */
+function ActualTimeField({ id, label, value, onFill, onChange, hint }: ActualTimeFieldProps) {
+  const current = value ?? { date: '', time: '' }
+  return (
+    <div className="flex flex-col gap-1">
+      <Label htmlFor={id}>{label}</Label>
+      <div className="grid grid-cols-2 gap-2" onFocus={onFill}>
+        <Input id={id} type="date" min={MIN_DATE} max={MAX_DATE} value={current.date} onChange={(e) => onChange({ ...current, date: e.target.value })} aria-label={`${label}: date`} />
+        <Input type="time" value={current.time} onChange={(e) => onChange({ ...current, time: e.target.value })} aria-label={`${label}: time`} />
+      </div>
+      <p className="text-xs text-muted-foreground">{hint}</p>
+    </div>
   )
 }
