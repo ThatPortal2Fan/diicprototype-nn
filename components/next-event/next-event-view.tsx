@@ -7,6 +7,7 @@ import { CheckCircle2, Loader2, Play, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ShiftControls } from '@/components/next-event/shift-controls'
+import { ActualTimesSection } from '@/components/next-event/actual-times-section'
 import { useEvents } from '@/hooks/use-events'
 import { useNow } from '@/hooks/use-now'
 import { completeEvent, startEventNow } from '@/lib/events-store'
@@ -61,6 +62,7 @@ export function NextEventView({ eventId }: { eventId?: string }) {
         ) : (
           <DoneCard event={event} />
         )}
+        {event ? <ActualTimesSection key={savedKey(event)} event={event} events={events} /> : null}
         {event ? <ShiftControls event={event} busy={busy} events={events} /> : null}
         {error ? (
           <p role="alert" className="text-sm text-destructive">
@@ -95,6 +97,7 @@ export function NextEventView({ eventId }: { eventId?: string }) {
             busy={busy}
             onStart={() => run(() => startEventNow(nearest))}
           />
+          <ActualTimesSection key={savedKey(nearest)} event={nearest} events={events} />
           <ShiftControls
             key={nearest.id}
             event={nearest}
@@ -120,6 +123,11 @@ export function NextEventView({ eventId }: { eventId?: string }) {
       ) : null}
     </div>
   )
+}
+
+/** Changes when the saved actual times or status change, so the actual-times section starts over. */
+function savedKey(event: CalendarEvent) {
+  return `${event.id}:${event.status}:${event.startedAt}:${event.completedAt}`
 }
 
 function NearestCard({
