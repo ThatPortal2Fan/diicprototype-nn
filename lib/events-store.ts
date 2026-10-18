@@ -17,7 +17,7 @@ import { addDays, addMonths, addWeeks, format } from 'date-fns'
 import { MAX_AT, MIN_AT } from './bounds'
 import { isInstant } from './event-utils'
 import { getDb, isFirebaseConfigured } from './firebase'
-import type { CalendarEvent, NewEventInput, RepeatRule } from './types'
+import type { CalendarEvent, ManualWindow, NewEventInput, RepeatRule } from './types'
 
 export interface EventsSnapshot {
   events: CalendarEvent[]
@@ -52,6 +52,12 @@ function toMillis(value: unknown): number | null {
   return null
 }
 
+function toWindow(value: unknown): ManualWindow | null {
+  if (!value || typeof value !== 'object') return null
+  const { fromMinutes, toMinutes } = value as Record<string, unknown>
+  return typeof fromMinutes === 'number' && typeof toMinutes === 'number' ? { fromMinutes, toMinutes } : null
+}
+
 function fromDoc(d: QueryDocumentSnapshot<DocumentData>): CalendarEvent {
   const data = d.data()
   return {
@@ -68,6 +74,8 @@ function fromDoc(d: QueryDocumentSnapshot<DocumentData>): CalendarEvent {
     repeatRule: data.repeatRule ?? 'none',
     repeatUntil: toMillis(data.repeatUntil),
     seriesId: data.seriesId ?? null,
+    manualStart: toWindow(data.manualStart),
+    manualEnd: toWindow(data.manualEnd),
   }
 }
 
@@ -151,7 +159,7 @@ function repeatDates(first: number, rule: RepeatRule, until: number) {
   return dates
 }
 
-type Occurrence = Pick<CalendarEvent, 'name' | 'detail' | 'startAt' | 'endAt' | 'repeatRule' | 'repeatUntil' | 'seriesId'>
+type Occurrence = Pick<CalendarEvent, 'name' | 'detail' | 'startAt' | 'endAt' | 'repeatRule' | 'repeatUntil' | 'seriesId' | 'manualStart' | 'manualEnd'>
 
 /** Copies of `base` (keeping its duration) at each of `dates`, all scheduled. */
 function occurrences(base: Occurrence, dates: (number | null)[]): Occurrence[] {
@@ -162,6 +170,9 @@ function occurrences(base: Occurrence, dates: (number | null)[]): Occurrence[] {
     repeatRule: base.repeatRule ?? 'none',
     repeatUntil: base.repeatUntil ?? null,
     seriesId: base.seriesId ?? null,
+    // Kept relative to the scheduled times, so each occurrence gets the same buffer.
+    manualStart: base.manualStart ?? null,
+    manualEnd: base.manualEnd ?? null,
     startAt,
     endAt: startAt !== null && base.startAt !== null && base.endAt != null ? startAt + (base.endAt - base.startAt) : base.endAt ?? null,
   }))
@@ -188,6 +199,8 @@ async function writeEvents(added: Occurrence[], removedIds: string[] = []) {
         repeatRule: o.repeatRule ?? 'none',
         repeatUntil: o.repeatUntil == null ? null : Timestamp.fromMillis(o.repeatUntil),
         seriesId: o.seriesId ?? null,
+        manualStart: o.manualStart ?? null,
+        manualEnd: o.manualEnd ?? null,
         status: 'scheduled', startedAt: null, shiftedMinutes: 0, createdAt: serverTimestamp(),
       }),
     ),
@@ -211,6 +224,8 @@ export async function createEvent(input: NewEventInput) {
     repeatRule,
     repeatUntil: input.repeatUntil ?? null,
     seriesId: repeats ? crypto.randomUUID() : null,
+    manualStart: input.manualStart ?? null,
+    manualEnd: input.manualEnd ?? null,
   }
   await writeEvents(occurrences(base, dates))
 }
@@ -329,6 +344,9 @@ export async function updateEvent(
     endAt: input.endAt == null ? null : Timestamp.fromMillis(input.endAt),
     repeatRule: input.repeatRule ?? 'none',
     repeatUntil: input.repeatUntil == null ? null : Timestamp.fromMillis(input.repeatUntil),
+    // undefined = leave untouched; null = clear the manual buffer
+    ...(input.manualStart !== undefined ? { manualStart: input.manualStart } : {}),
+    ...(input.manualEnd !== undefined ? { manualEnd: input.manualEnd } : {}),
     ...(input.status ? { status: input.status } : {}),
     // undefined = leave untouched; null = clear the recorded actual start
     ...(input.startedAt !== undefined ? { startedAt: input.startedAt === null ? null : Timestamp.fromMillis(input.startedAt) } : {}),
@@ -341,6 +359,8 @@ export async function updateEvent(
       name: input.name, detail: input.detail ?? '', startAt: input.startAt, endAt: input.endAt ?? null,
       repeatRule: input.repeatRule ?? 'none',
       repeatUntil: input.repeatUntil ?? null, ...(input.status ? { status: input.status } : {}),
+      ...(input.manualStart !== undefined ? { manualStart: input.manualStart } : {}),
+      ...(input.manualEnd !== undefined ? { manualEnd: input.manualEnd } : {}),
       ...(input.startedAt !== undefined ? { startedAt: input.startedAt } : {}),
       ...(input.completedAt !== undefined ? { completedAt: input.completedAt } : {}),
       ...(completedNow ? { completedAt: now } : {}),

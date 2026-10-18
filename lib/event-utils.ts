@@ -1,4 +1,4 @@
-import type { CalendarEvent } from './types'
+import type { CalendarEvent, ManualWindow } from './types'
 
 const MINUTE = 60_000
 
@@ -138,11 +138,11 @@ export function fitNormal(offsets: number[]): TimeStats | null {
  * - end offsets:   actual completion - scheduled end
  * A normal distribution is fitted to each; the buffer is 1.5x its standard deviation.
  */
-function similarityKey(event: CalendarEvent) {
+function similarityKey(event: Pick<CalendarEvent, 'name' | 'detail'>) {
   return `${event.name.trim().toLocaleLowerCase()}\u0000${(event.detail ?? '').trim().toLocaleLowerCase()}`
 }
 
-export function getEventEstimate(event: CalendarEvent, events: CalendarEvent[]): EventEstimate {
+export function getEventEstimate(event: Pick<CalendarEvent, 'id' | 'name' | 'detail'>, events: CalendarEvent[]): EventEstimate {
   const key = similarityKey(event)
   const similar = events.filter((item) => item.id !== event.id && similarityKey(item) === key)
   const startOffsets = similar
@@ -178,6 +178,29 @@ export function getBufferWindows(event: CalendarEvent, events: CalendarEvent[]) 
   return {
     start: bufferAround(event.startAt, estimate.start),
     end: isInstant(event) ? null : bufferAround(event.endAt, estimate.end),
+  }
+}
+
+export interface ManualRange {
+  /** Earliest time, in ms. */
+  from: number
+  /** Latest time, in ms. */
+  to: number
+}
+
+function manualAround(at: number | null | undefined, window: ManualWindow | null | undefined): ManualRange | null {
+  if (at == null || !window) return null
+  return { from: at + window.fromMinutes * MINUTE, to: at + window.toMinutes * MINUTE }
+}
+
+/**
+ * The user's own buffer (earliest and latest time they think it might start / end / happen), separate from the
+ * calculated one. Stored relative to the scheduled times, so it moves with the event.
+ */
+export function getManualWindows(event: CalendarEvent) {
+  return {
+    start: manualAround(event.startAt, event.manualStart),
+    end: isInstant(event) ? null : manualAround(event.endAt, event.manualEnd),
   }
 }
 

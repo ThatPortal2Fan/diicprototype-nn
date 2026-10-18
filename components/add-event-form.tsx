@@ -8,9 +8,10 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { NameCombobox } from '@/components/name-combobox'
+import { ManualWindowFields, useManualWindows } from '@/components/manual-windows'
 import { createEvent } from '@/lib/events-store'
 import { useEvents } from '@/hooks/use-events'
-import { canonical, detailOptions, distinctOptions } from '@/lib/event-utils'
+import { canonical, detailOptions, distinctOptions, getEventEstimate } from '@/lib/event-utils'
 import { BOUNDS_LABEL, MAX_DATE, MAX_LABEL, MIN_DATE } from '@/lib/bounds'
 import type { RepeatRule } from '@/lib/types'
 
@@ -37,6 +38,14 @@ export function AddEventForm() {
   const { events } = useEvents()
   const existingNames = distinctOptions(events.map((event) => event.name))
   const existingDetails = detailOptions(events, nameInput)
+  // Follow the date and times, so the manual buffer fields know whether the event is instant and what to fill in.
+  const [dateInput, setDateInput] = useState(initial.date)
+  const [timeInput, setTimeInput] = useState(initial.time)
+  const [endInput, setEndInput] = useState('')
+  const typedStart = toMillis(dateInput, timeInput)
+  const typedEnd = toMillis(dateInput, endInput)
+  const estimate = getEventEstimate({ id: '', name: nameInput, detail: detailInput }, events)
+  const manual = useManualWindows(null, { startAt: typedStart, endAt: typedEnd }, estimate)
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -59,6 +68,8 @@ export function AddEventForm() {
     if (time && startAt === null) return setError('Please choose a valid start time.')
     if (endTime && endAt === null) return setError('Please choose a valid end time.')
     if (startAt !== null && endAt !== null && endAt < startAt) return setError('End time must be after the start time.')
+    const ownBuffer = manual.resolve(startAt, endAt)
+    if (typeof ownBuffer === 'string') return setError(ownBuffer)
     let repeatUntil: number | null = null
     if (repeatRule !== 'none') {
       if (!date || !repeatUntilDate || repeatUntilDate < date || repeatUntilDate > MAX_DATE || repeatUntilDate < MIN_DATE) {
@@ -68,7 +79,7 @@ export function AddEventForm() {
     }
     setSubmitting(true)
     try {
-      await createEvent({ name, detail, startAt, endAt, repeatRule, repeatUntil })
+      await createEvent({ name, detail, startAt, endAt, repeatRule, repeatUntil, ...ownBuffer })
       router.push('/calendar')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong saving the event.')
@@ -108,10 +119,11 @@ export function AddEventForm() {
           <p className="text-xs text-muted-foreground">Predictions are calculated from past events with the same name and detail.</p>
         </div>
         <div className="grid grid-cols-2 gap-3">
-          <div className="flex flex-col gap-2"><Label htmlFor="date">Date</Label><Input id="date" name="date" type="date" min={MIN_DATE} max={MAX_DATE} defaultValue={initial.date} className="h-11 text-base" /></div>
-          <div className="flex flex-col gap-2"><Label htmlFor="time">Start time (optional)</Label><Input id="time" name="time" type="time" defaultValue={initial.time} className="h-11 text-base" /></div>
-          <div className="col-span-2 flex flex-col gap-2"><Label htmlFor="endTime">End time (optional)</Label><Input id="endTime" name="endTime" type="time" className="h-11 text-base" /></div>
+          <div className="flex flex-col gap-2"><Label htmlFor="date">Date</Label><Input id="date" name="date" type="date" min={MIN_DATE} max={MAX_DATE} defaultValue={initial.date} onChange={(e) => setDateInput(e.target.value)} className="h-11 text-base" /></div>
+          <div className="flex flex-col gap-2"><Label htmlFor="time">Start time (optional)</Label><Input id="time" name="time" type="time" defaultValue={initial.time} onChange={(e) => setTimeInput(e.target.value)} className="h-11 text-base" /></div>
+          <div className="col-span-2 flex flex-col gap-2"><Label htmlFor="endTime">End time (optional)</Label><Input id="endTime" name="endTime" type="time" onChange={(e) => setEndInput(e.target.value)} className="h-11 text-base" /></div>
         </div>
+        <ManualWindowFields id="new" windows={manual} inputClassName="h-11 text-base" />
         <div className="flex flex-col gap-2">
           <Label htmlFor="repeatRule">Repeat event</Label>
           <select id="repeatRule" name="repeatRule" className="h-11 rounded-md border border-input bg-background px-3 text-sm">

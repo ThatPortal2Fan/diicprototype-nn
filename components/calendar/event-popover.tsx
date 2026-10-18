@@ -10,9 +10,10 @@ import { Label } from '@/components/ui/label'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { NameCombobox } from '@/components/name-combobox'
 import { ActualTimesFields, useActualTimes } from '@/components/actual-times'
+import { ManualWindowFields, useManualWindows } from '@/components/manual-windows'
 import { applyRepeatChange, removeEvent, updateEvent } from '@/lib/events-store'
 import { useEvents } from '@/hooks/use-events'
-import { canonical, detailOptions, eventTitle, getBufferWindows, getEventEstimate, formatDuration, isInstant } from '@/lib/event-utils'
+import { canonical, detailOptions, eventTitle, getBufferWindows, getEventEstimate, getManualWindows, formatDuration, isInstant } from '@/lib/event-utils'
 import { BOUNDS_LABEL, MAX_DATE, MIN_DATE } from '@/lib/bounds'
 import type { CalendarEvent, RepeatRule } from '@/lib/types'
 
@@ -41,9 +42,12 @@ export function EventPopover({ event, className, style, children }: EventPopover
   const typedStart = dateInput && timeInput ? new Date(`${dateInput}T${timeInput}`).getTime() : null
   const typedEnd = dateInput && endInput ? new Date(`${dateInput}T${endInput}`).getTime() : null
   const times = useActualTimes(event, events, { startAt: typedStart, endAt: typedEnd })
+  const manual = useManualWindows(event, { startAt: typedStart, endAt: typedEnd }, estimate)
+  const manualWindows = getManualWindows(event)
 
   function openEditor() {
     times.reset()
+    manual.reset()
     setDateInput(date); setTimeInput(time); setEndInput(endTime); setDetailInput(event.detail ?? ''); setEditing(true)
   }
 
@@ -66,6 +70,8 @@ export function EventPopover({ event, className, style, children }: EventPopover
     const actual = times.resolve(startAt, endAt)
     if (typeof actual === 'string') return setError(actual)
     const { startedAt, completedAt } = actual
+    const ownBuffer = manual.resolve(startAt, endAt)
+    if (typeof ownBuffer === 'string') return setError(ownBuffer)
     const status = times.status
     const actualStart = startedAt === undefined ? event.startedAt : startedAt
     const repeatRule = String(data.get('repeatRule') ?? 'none') as RepeatRule
@@ -75,8 +81,8 @@ export function EventPopover({ event, className, style, children }: EventPopover
     if (until && (until < MIN_DATE || until > MAX_DATE || (d && until < d))) return setError('Invalid repeat-until date.')
     setSaving(true)
     try {
-      await updateEvent(event, { name, detail, startAt, endAt, repeatRule, repeatUntil, status, startedAt, completedAt })
-      await applyRepeatChange(event, { ...event, name, detail, startAt, endAt, repeatRule, repeatUntil, status, startedAt: actualStart ?? null }, events)
+      await updateEvent(event, { name, detail, startAt, endAt, repeatRule, repeatUntil, status, startedAt, completedAt, ...ownBuffer })
+      await applyRepeatChange(event, { ...event, name, detail, startAt, endAt, repeatRule, repeatUntil, status, startedAt: actualStart ?? null, ...ownBuffer }, events)
       setEditing(false)
     } catch (err) { setError(err instanceof Error ? err.message : 'Could not save event.') }
     finally { setSaving(false) }
@@ -95,6 +101,9 @@ export function EventPopover({ event, className, style, children }: EventPopover
             {windows.start ? <p className="pl-6">Predicted start {format(windows.start.from, 'HH:mm')}–{format(windows.start.to, 'HH:mm')}</p> : null}
             {endStats && !isInstant(event) ? <p className="pl-6">Usually ends {Math.round(endStats.meanMinutes) === 0 ? 'on time' : `${formatDuration(endStats.meanMinutes)} ${endStats.meanMinutes < 0 ? 'early' : 'late'}`} (±{formatDuration(endStats.bufferMinutes)})</p> : null}
             {windows.end ? <p className="pl-6">Predicted end {format(windows.end.from, 'HH:mm')}–{format(windows.end.to, 'HH:mm')}</p> : null}
+            {manualWindows.start || manualWindows.end ? <p className="flex items-center gap-2"><span className="h-3 w-4 shrink-0 border-y-2 border-dashed border-violet-600/80 bg-violet-500/15" aria-hidden="true" />Your own buffer</p> : null}
+            {manualWindows.start ? <p className="pl-6">Might {isInstant(event) ? 'happen' : 'start'} {format(manualWindows.start.from, 'HH:mm')}–{format(manualWindows.start.to, 'HH:mm')}</p> : null}
+            {manualWindows.end ? <p className="pl-6">Might end {format(manualWindows.end.from, 'HH:mm')}–{format(manualWindows.end.to, 'HH:mm')}</p> : null}
           </div>
           <div className="flex gap-2">
             <Button size="sm" className="flex-1" onClick={openEditor}><Pencil aria-hidden="true" />Edit event</Button>
@@ -110,6 +119,7 @@ export function EventPopover({ event, className, style, children }: EventPopover
           <div className="flex flex-col gap-1"><Label htmlFor={`date-${event.id}`}>Date</Label><Input id={`date-${event.id}`} name="date" type="date" min={MIN_DATE} max={MAX_DATE} defaultValue={date} onChange={(e) => setDateInput(e.target.value)} /></div>
           <div className="flex flex-col gap-1"><Label htmlFor={`time-${event.id}`}>Start time (optional)</Label><Input id={`time-${event.id}`} name="time" type="time" defaultValue={time} onChange={(e) => setTimeInput(e.target.value)} /></div>
           <div className="flex flex-col gap-1"><Label htmlFor={`end-${event.id}`}>End time (optional)</Label><Input id={`end-${event.id}`} name="endTime" type="time" defaultValue={endTime} onChange={(e) => setEndInput(e.target.value)} /></div>
+          <ManualWindowFields id={event.id} windows={manual} />
           <ActualTimesFields id={event.id} times={times} />
           <div className="flex flex-col gap-1"><Label htmlFor={`repeat-${event.id}`}>Repeats</Label><select id={`repeat-${event.id}`} name="repeatRule" defaultValue={event.repeatRule ?? 'none'} className="h-10 rounded-md border border-input bg-background px-3 text-sm"><option value="none">Never</option><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></div>
           <div className="flex flex-col gap-1"><Label htmlFor={`until-${event.id}`}>Repeat until</Label><Input id={`until-${event.id}`} name="repeatUntil" type="date" min={MIN_DATE} max={MAX_DATE} defaultValue={event.repeatUntil == null ? '' : format(event.repeatUntil, 'yyyy-MM-dd')} /><p className="text-xs text-muted-foreground">Changing the repeat applies to this and the following occurrences that haven&apos;t started: they are recreated from this one, or removed for &ldquo;Never&rdquo;.</p></div>

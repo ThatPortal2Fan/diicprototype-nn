@@ -125,9 +125,10 @@ export function NextEventView({ eventId }: { eventId?: string }) {
   )
 }
 
-/** Changes when the saved actual times or status change, so the actual-times section starts over. */
+/** Changes when the saved times or status change, so the times section starts over. */
 function savedKey(event: CalendarEvent) {
-  return `${event.id}:${event.status}:${event.startedAt}:${event.completedAt}`
+  const window = (w: CalendarEvent['manualStart']) => (w ? `${w.fromMinutes}/${w.toMinutes}` : '')
+  return `${event.id}:${event.status}:${event.startedAt}:${event.completedAt}:${event.startAt}:${event.endAt}:${window(event.manualStart)}:${window(event.manualEnd)}`
 }
 
 function NearestCard({

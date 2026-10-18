@@ -4,7 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { addDays, format, isSameDay, startOfDay, startOfWeek } from 'date-fns'
 import { EventPopover } from '@/components/calendar/event-popover'
 import type { CalendarEvent } from '@/lib/types'
-import { eventTitle, getBufferWindows, isInstant } from '@/lib/event-utils'
+import { eventTitle, getBufferWindows, getManualWindows, isInstant, type ManualRange } from '@/lib/event-utils'
 import { cn } from '@/lib/utils'
 
 /** Default pixels per hour; pinching (or ctrl/trackpad zoom) scales it between the min and max, like Apple Calendar. */
@@ -43,19 +43,22 @@ function layoutDay(dayEvents: CalendarEvent[], events: CalendarEvent[], hourHeig
     const end = instant ? start : Math.min(start + Math.max((event.endAt! - event.startAt!) / 60_000, MIN_BLOCK_MINUTES), DAY_MINUTES)
     // Buffers: scheduled time ± 1.5σ, around the start and (for duration events) the end.
     const windows = getBufferWindows(event, events)
-    const bands = [windows.start, windows.end]
-      .filter((w) => w !== null && w.stats.bufferMinutes > 0)
-      .map((w) => ({ from: clampDay(toMinutes(w!.from, event, start)), to: clampDay(toMinutes(w!.to, event, start)) }))
+    const toBand = (w: ManualRange) => ({ from: clampDay(toMinutes(w.from, event, start)), to: clampDay(toMinutes(w.to, event, start)) })
+    const bands = [windows.start, windows.end].filter((w) => w !== null && w.stats.bufferMinutes > 0).map((w) => toBand(w!))
+    // The user's own buffer, drawn separately from the calculated one.
+    const manual = getManualWindows(event)
+    const manualBands = [manual.start, manual.end].filter((w) => w !== null).map((w) => toBand(w!))
+    const allBands = [...bands, ...manualBands]
     // Lanes account for labels and buffers too, so they never overlap another event.
-    const top = Math.min(instant ? start - labelMinutes : start, ...bands.map((b) => b.from))
-    const bottom = Math.max(end + 2, ...bands.map((b) => b.to))
+    const top = Math.min(instant ? start - labelMinutes : start, ...allBands.map((b) => b.from))
+    const bottom = Math.max(end + 2, ...allBands.map((b) => b.to))
     let lane = laneEnds.findIndex((laneEnd) => laneEnd <= top)
     if (lane === -1) {
       lane = laneEnds.length
       laneEnds.push(-Infinity)
     }
     laneEnds[lane] = bottom
-    return { event, start, end, instant, bands, lane }
+    return { event, start, end, instant, bands, manualBands, lane }
   })
   return { placed, lanes: Math.max(laneEnds.length, 1) }
 }
@@ -65,6 +68,8 @@ const STATUS_COLORS: Record<CalendarEvent['status'], { line: string; text: strin
   in_progress: { line: 'bg-emerald-500', text: 'text-emerald-900', band: 'bg-emerald-500/15 border-emerald-600/80' },
   done: { line: 'bg-muted-foreground/50', text: 'text-muted-foreground line-through', band: 'bg-muted-foreground/10 border-muted-foreground/60' },
 }
+/** The user's own buffer: same look as the calculated one, in violet with dashed edges. */
+const MANUAL_BAND = 'bg-violet-500/15 border-violet-600/80 border-dashed'
 
 export function WeekView({ cursor, now, events }: WeekViewProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -228,29 +233,31 @@ export function WeekView({ cursor, now, events }: WeekViewProps) {
                   />
                 ))}
 
-                {placed.map(({ event, start, end, instant, bands, lane }) => {
+                {placed.map(({ event, start, end, instant, bands, manualBands, lane }) => {
                   const top = (start / 60) * hourHeight
                   const left = `calc(${(lane / lanes) * 100}% + 2px)`
                   const width = `calc(${100 / lanes}% - 4px)`
                   const colors = STATUS_COLORS[event.status]
                   const time = format(event.startAt!, 'HH:mm')
-                  // Buffer: lower-opacity colour over the event, edges as dotted lines.
-                  const bufferBands = bands.map((band, i) => (
-                    <div
-                      key={i}
-                      className={cn('pointer-events-none absolute border-y-2 border-dotted', colors.band)}
-                      style={{
-                        top: (band.from / 60) * hourHeight,
-                        height: ((band.to - band.from) / 60) * hourHeight,
-                        left,
-                        width,
-                      }}
-                      aria-hidden="true"
-                    />
-                  ))
+                  // Buffer: lower-opacity colour over the event, edges as dotted lines. The user's own buffer goes on
+                  // top of the calculated one with dashed edges, so both stay visible where they overlap.
+                  const bandStyle = (band: { from: number; to: number }) => ({
+                    top: (band.from / 60) * hourHeight,
+                    height: ((band.to - band.from) / 60) * hourHeight,
+                    left,
+                    width,
+                  })
+                  const bufferBands = [
+                    ...bands.map((band, i) => (
+                      <div key={`calc-${i}`} className={cn('pointer-events-none absolute border-y-2 border-dotted', colors.band)} style={bandStyle(band)} aria-hidden="true" />
+                    )),
+                    ...manualBands.map((band, i) => (
+                      <div key={`manual-${i}`} className={cn('pointer-events-none absolute border-y-2', MANUAL_BAND, event.status === 'done' && 'opacity-60')} style={bandStyle(band)} aria-hidden="true" />
+                    )),
+                  ]
                   return (
                     <div key={event.id}>
-                      {/* Instant events draw the buffer under their label so it stays readable; blocks get it on top. */}
+                      {/* Instant events draw the buffer under their label, whose see-through background keeps both readable; blocks get it on top. */}
                       {instant ? bufferBands : null}
                       {instant ? (
                         // Instant event: a line at its time, with the name just above it.
@@ -262,7 +269,7 @@ export function WeekView({ cursor, now, events }: WeekViewProps) {
                             colors.text,
                           )}
                         >
-                          <span className="mb-px flex max-w-full min-w-0 gap-1 self-start rounded-sm bg-card px-1">
+                          <span className="mb-px flex max-w-full min-w-0 gap-1 self-start rounded-sm bg-card/70 px-1">
                             <span className="truncate font-semibold">{eventTitle(event)}</span>
                             <span className="shrink-0 opacity-80 tabular-nums">{time}</span>
                           </span>
@@ -305,6 +312,16 @@ export function WeekView({ cursor, now, events }: WeekViewProps) {
             )
           })}
         </div>
+      </div>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-border px-3 py-2 text-xs text-muted-foreground">
+        <span className="inline-flex items-center gap-1.5">
+          <span className={cn('h-3 w-5 border-y-2 border-dotted', STATUS_COLORS.scheduled.band)} aria-hidden="true" />
+          Calculated buffer
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className={cn('h-3 w-5 border-y-2', MANUAL_BAND)} aria-hidden="true" />
+          Your own buffer
+        </span>
       </div>
     </div>
   )
