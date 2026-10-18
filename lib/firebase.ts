@@ -1,4 +1,5 @@
 import { getApp, getApps, initializeApp } from 'firebase/app'
+import { getAuth, type Auth } from 'firebase/auth'
 import { getFirestore, type Firestore } from 'firebase/firestore'
 
 const firebaseConfig = {
@@ -15,14 +16,21 @@ export const isFirebaseConfigured = Boolean(
 )
 
 let db: Firestore | null = null
+let auth: Auth | null = null
 
-export function getDb(): Firestore {
+function getFirebaseApp() {
   if (!isFirebaseConfigured) {
     throw new Error('Firebase is not configured')
   }
-  if (!db) {
-    const app = getApps().length ? getApp() : initializeApp(firebaseConfig)
-    db = getFirestore(app)
-  }
+  return getApps().length ? getApp() : initializeApp(firebaseConfig)
+}
+
+export function getDb(): Firestore {
+  if (!db) db = getFirestore(getFirebaseApp())
   return db
+}
+
+export function getFirebaseAuth(): Auth {
+  if (!auth) auth = getAuth(getFirebaseApp())
+  return auth
 }

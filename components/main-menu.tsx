@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { format, isSameWeek } from 'date-fns'
 import { ArrowRight, CalendarDays, Plus, Timer } from 'lucide-react'
 import { NotificationBell } from '@/components/notification-bell'
+import { AccountMenu } from '@/components/account-menu'
 import { DataStatusBanner } from '@/components/data-status-banner'
 import { useEvents } from '@/hooks/use-events'
 import { useNow } from '@/hooks/use-now'
@@ -27,7 +28,10 @@ export function MainMenu() {
           </p>
           <h1 className="text-3xl font-bold tracking-tight text-balance">SteadyPace</h1>
         </div>
-        <NotificationBell />
+        <div className="flex items-center gap-2">
+          <NotificationBell />
+          <AccountMenu className="size-11" />
+        </div>
       </header>
 
       <DataStatusBanner />

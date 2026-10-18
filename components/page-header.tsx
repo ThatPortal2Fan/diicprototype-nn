@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { ChevronLeft } from 'lucide-react'
 import type { ReactNode } from 'react'
+import { AccountMenu } from '@/components/account-menu'
 
 export function PageHeader({ title, actions }: { title: string; actions?: ReactNode }) {
   return (
@@ -13,7 +14,10 @@ export function PageHeader({ title, actions }: { title: string; actions?: ReactN
           <ChevronLeft className="size-5" aria-hidden="true" />
           Menu
         </Link>
-        {actions ? <div className="flex items-center gap-2">{actions}</div> : null}
+        <div className="flex items-center gap-2">
+          {actions}
+          <AccountMenu />
+        </div>
       </div>
       <h1 className="text-3xl font-bold tracking-tight text-balance">{title}</h1>
     </header>

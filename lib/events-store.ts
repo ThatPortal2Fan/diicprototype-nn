@@ -14,6 +14,7 @@ import {
   type QueryDocumentSnapshot,
 } from 'firebase/firestore'
 import { addDays, addMonths, addWeeks, format } from 'date-fns'
+import { getAuthSnapshot, subscribeAuth } from './auth'
 import { MAX_AT, MIN_AT } from './bounds'
 import { isInstant } from './event-utils'
 import { getDb, isFirebaseConfigured } from './firebase'
@@ -27,7 +28,6 @@ export interface EventsSnapshot {
 }
 
 const MODE: EventsSnapshot['mode'] = isFirebaseConfigured ? 'firebase' : 'demo'
-const COLLECTION = 'events'
 const MINUTE = 60_000
 
 const serverSnapshot: EventsSnapshot = {
@@ -40,11 +40,24 @@ const serverSnapshot: EventsSnapshot = {
 let snapshot: EventsSnapshot = serverSnapshot
 let started = false
 const listeners = new Set<() => void>()
+/** The signed-in user whose events are loaded; each user only sees their own. */
+let uid: string | null = null
+let stopListening: (() => void) | null = null
+/** Demo mode keeps each user's events in memory while the page is open. */
+const demoEvents = new Map<string, CalendarEvent[]>()
 
 function setSnapshot(next: Partial<EventsSnapshot>) {
   snapshot = { ...snapshot, ...next }
+  if (MODE === 'demo' && uid && next.events) demoEvents.set(uid, next.events)
   listeners.forEach((listener) => listener())
 }
+
+function requireUid() {
+  if (!uid) throw new Error('Log in to change events.')
+  return uid
+}
+const eventsCollection = () => collection(getDb(), 'users', requireUid(), 'events')
+const eventDoc = (id: string) => doc(getDb(), 'users', requireUid(), 'events', id)
 
 function toMillis(value: unknown): number | null {
   if (value instanceof Timestamp) return value.toMillis()
@@ -107,21 +120,35 @@ function seedDemoEvents(): CalendarEvent[] {
   ])
 }
 
-function start() {
-  if (started || typeof window === 'undefined') return
-  started = true
-
-  if (MODE === 'demo') {
-    setSnapshot({ events: seedDemoEvents(), status: 'ready' })
+/** Load the events of whoever is signed in, and switch over when the user changes. */
+function followUser() {
+  const next = getAuthSnapshot().user?.uid ?? null
+  if (next === uid) return
+  stopListening?.()
+  stopListening = null
+  uid = next
+  if (!uid) {
+    setSnapshot({ events: [], status: 'loading', error: null })
     return
   }
-
-  const q = query(collection(getDb(), COLLECTION), orderBy('startAt', 'asc'))
-  onSnapshot(
+  if (MODE === 'demo') {
+    setSnapshot({ events: demoEvents.get(uid) ?? seedDemoEvents(), status: 'ready', error: null })
+    return
+  }
+  setSnapshot({ events: [], status: 'loading', error: null })
+  const q = query(eventsCollection(), orderBy('startAt', 'asc'))
+  stopListening = onSnapshot(
     q,
     (snap) => setSnapshot({ events: snap.docs.map(fromDoc), status: 'ready', error: null }),
     (err) => setSnapshot({ status: 'error', error: err.message }),
   )
+}
+
+function start() {
+  if (started || typeof window === 'undefined') return
+  started = true
+  subscribeAuth(followUser)
+  followUser()
 }
 
 export function subscribeEvents(listener: () => void) {
@@ -189,9 +216,9 @@ async function writeEvents(added: Occurrence[], removedIds: string[] = []) {
     return
   }
   const ops = [
-    ...removedIds.map((id) => (batch: ReturnType<typeof writeBatch>) => batch.delete(doc(getDb(), COLLECTION, id))),
+    ...removedIds.map((id) => (batch: ReturnType<typeof writeBatch>) => batch.delete(eventDoc(id))),
     ...added.map((o) => (batch: ReturnType<typeof writeBatch>) =>
-      batch.set(doc(collection(getDb(), COLLECTION)), {
+      batch.set(doc(eventsCollection()), {
         name: o.name,
         detail: o.detail ?? '',
         startAt: o.startAt === null ? null : Timestamp.fromMillis(o.startAt),
@@ -261,7 +288,7 @@ export async function applyRepeatChange(before: CalendarEvent, after: CalendarEv
   await writeEvents(occurrences({ ...after, seriesId }, dates), removed.map((e) => e.id))
   if (seriesId !== (before.seriesId ?? null)) {
     if (MODE === 'demo') updateDemo(before.id, () => ({ seriesId }))
-    else await updateDoc(doc(getDb(), COLLECTION, before.id), { seriesId })
+    else await updateDoc(eventDoc(before.id), { seriesId })
   }
 }
 
@@ -272,7 +299,7 @@ export async function shiftEvent(event: CalendarEvent, minutes: number) {
     updateDemo(event.id, (e) => ({ startAt, shiftedMinutes: e.shiftedMinutes + minutes }))
     return
   }
-  await updateDoc(doc(getDb(), COLLECTION, event.id), {
+  await updateDoc(eventDoc(event.id), {
     startAt: Timestamp.fromMillis(startAt),
     shiftedMinutes: increment(minutes),
   })
@@ -286,7 +313,7 @@ export async function startEventNow(event: CalendarEvent) {
       updateDemo(event.id, () => ({ status: 'done', startedAt: now, completedAt: now }))
       return
     }
-    await updateDoc(doc(getDb(), COLLECTION, event.id), {
+    await updateDoc(eventDoc(event.id), {
       status: 'done',
       startedAt: Timestamp.fromMillis(now),
       completedAt: Timestamp.fromMillis(now),
@@ -301,7 +328,7 @@ export async function startEventNow(event: CalendarEvent) {
     }))
     return
   }
-  await updateDoc(doc(getDb(), COLLECTION, event.id), {
+  await updateDoc(eventDoc(event.id), {
     status: 'in_progress',
     startedAt: Timestamp.fromMillis(now),
 
@@ -314,7 +341,7 @@ export async function completeEvent(event: CalendarEvent) {
     updateDemo(event.id, () => ({ status: 'done', completedAt: now }))
     return
   }
-  await updateDoc(doc(getDb(), COLLECTION, event.id), {
+  await updateDoc(eventDoc(event.id), {
     status: 'done',
     completedAt: Timestamp.fromMillis(now),
   })
@@ -325,7 +352,7 @@ export async function removeEvent(event: CalendarEvent) {
     setSnapshot({ events: snapshot.events.filter((e) => e.id !== event.id) })
     return
   }
-  await deleteDoc(doc(getDb(), COLLECTION, event.id))
+  await deleteDoc(eventDoc(event.id))
 }
 
 export async function updateEvent(
@@ -367,5 +394,5 @@ export async function updateEvent(
     }))
     return
   }
-  await updateDoc(doc(getDb(), COLLECTION, event.id), patch)
+  await updateDoc(eventDoc(event.id), patch)
 }
