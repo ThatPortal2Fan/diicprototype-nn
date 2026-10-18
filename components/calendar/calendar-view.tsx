@@ -27,7 +27,7 @@ function weekLabel(cursor: Date) {
 export function CalendarView() {
   const { events } = useEvents()
   const now = useNow()
-  const [view, setView] = useState<View>('month')
+  const [view, setView] = useState<View>('week')
   const [cursor, setCursor] = useState<Date | null>(null)
   const activeCursor = cursor ?? (now ? new Date(now) : null)
   // Day whose events are listed below the month grid; defaults to today.
