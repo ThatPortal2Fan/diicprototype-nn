@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { addDays, format, isSameDay, startOfDay, startOfWeek } from 'date-fns'
+import { addDays, format, isSameDay, startOfWeek } from 'date-fns'
 import { EventPopover } from '@/components/calendar/event-popover'
 import type { CalendarEvent } from '@/lib/types'
 import { eventTitle, getBufferWindows, getManualWindows, isInstant, type ManualRange } from '@/lib/event-utils'
@@ -24,8 +24,10 @@ interface WeekViewProps {
   events: CalendarEvent[]
 }
 
+/** Clock time in minutes, matching the hour grid. Not time elapsed since midnight, which is off by an hour after a DST change. */
 function minutesIntoDay(ms: number) {
-  return (ms - startOfDay(ms).getTime()) / 60_000
+  const date = new Date(ms)
+  return date.getHours() * 60 + date.getMinutes() + date.getSeconds() / 60
 }
 
 const toMinutes = (ms: number, event: CalendarEvent, start: number) => start + (ms - event.startAt!) / 60_000
